@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import pytesseract
 import io
 
 # Configuración de la página y diseño
@@ -69,7 +68,7 @@ if 'nombre_muestra_actual' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📂 Carga de Faja Individual")
-    st.markdown("Seleccione o arrastre la imagen de la faja digitalizada (de a una por vez). Asegúrese de que las marcas y el nombre de la muestra sean legibles.")
+    st.markdown("Seleccione o arrastre la imagen de la faja digitalizada. **Sugerencia:** Nómbre previamente su archivo de imagen con el nombre de la muestra (ej: `Lote_SanCayetano.jpg`).")
     
     uploaded_file = st.file_uploader(
         "Seleccionar imagen de faja (Formatos: JPG, PNG)", 
@@ -81,20 +80,13 @@ with tab_carga:
         img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
         
         if img is not None:
-            st.image(img, caption="Faja cargada", use_column_width=True)
+            st.image(img, caption=f"Imagen cargada: {uploaded_file.name}", use_column_width=True)
+            
+            # Tomar el nombre directamente del archivo subido (sin extensión)
+            nombre_muestra = uploaded_file.name.rsplit('.', 1)[0]
+            st.session_state['nombre_muestra_actual'] = nombre_muestra
             
             if st.button("🚀 Procesar Faja", type="primary"):
-                h_img, w_img = img.shape
-                zona_superior = img[0:int(h_img * 0.20), 0:w_img]
-                _, thresh_ocr = cv2.threshold(zona_superior, 150, 255, cv2.THRESH_BINARY)
-                nombre_detectado = pytesseract.image_to_string(thresh_ocr, config='--psm 7').strip()
-                
-                nombre_muestra = "".join([c for c in nombre_detectado if c.isalnum() or c in ('_', '-')])
-                if not nombre_muestra:
-                    nombre_muestra = uploaded_file.name.split('.')[0]
-
-                st.session_state['nombre_muestra_actual'] = nombre_muestra
-
                 # Procesamiento físico de marcas
                 blur = cv2.GaussianBlur(img, (5, 5), 0)
                 thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -198,10 +190,10 @@ with tab_manual:
     with st.expander("📖 Manual de Uso Paso a Paso", expanded=True):
         st.markdown("""
         1. **Preparación:** Registre la faja de papel junto a una escala o regla milimetrada.
-        2. **Digitalización:** Tome una fotografía nítida o escanee la faja individualmente en formato JPG o PNG.
+        2. **Digitalización:** Tome una fotografía nítida o escanee la faja individualmente y asigne un nombre claro al archivo de imagen (ej: `Muestra_01.jpg`).
         3. **Configuración:** Ingrese los parámetros físicos de su equipo en el panel lateral izquierdo.
         4. **Carga:** Ingrese a la pestaña **📁 Carga de Faja**, cargue la imagen y presione **Procesar Faja**.
-        5. **Análisis y Exportación:** Inspeccione la planilla y el gráfico generado, y descargue el archivo CSV para su análisis estadístico.
+        5. **Análisis y Exportación:** Inspeccione la planilla y el gráfico generado, y descargue el archivo CSV para su análisis estadístico en InfoStat.
         """)
         
     with st.expander("🔬 Fundamento Físico y Bibliografía"):
