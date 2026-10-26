@@ -258,14 +258,3 @@ with tab_manual:
         "</div>", 
         unsafe_allow_html=True
     )
-B. Archivo requirements.txt (Librerías de Python)
-Crea un segundo archivo de texto llamado exactamente requirements.txt, pega esto dentro y guárdalo:
-
-Plaintext
-streamlit
-opencv-python-headless
-numpy
-pandas
-matplotlib
-scipy
-pytesseract
