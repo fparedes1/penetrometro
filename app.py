@@ -4,12 +4,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import pytesseract
-import zipfile
 import io
 
 # Configuración de la página y diseño
 st.set_page_config(
-    page_title="Procesador de Fajas - INTA EEA Corrientes", 
+    page_title="Penetrómetro de golpes - INTA EEA Corrientes", 
     page_icon="🌾", 
     layout="wide"
 )
@@ -23,18 +22,11 @@ st.markdown("""
     .stSidebar {
         background-color: #f1f5f9;
     }
-    .card {
-        padding: 20px;
-        border-radius: 10px;
-        background-color: white;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🌾 Automatización de Fajas de Penetrómetro de Golpes")
-st.markdown("Herramienta de procesamiento digital para resistencia mecánica a la penetración de suelos.")
+st.title("🌾 Penetrómetro de golpes")
+st.markdown("Herramienta de procesamiento digital individual para el análisis de resistencia mecánica del suelo.")
 
 # --- Panel Lateral de Configuración y Créditos ---
 st.sidebar.header("⚙️ Parámetros del Ensayo")
@@ -57,74 +49,64 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# --- Creación de Pestañas Principales con sus respectivos íconos ---
+# --- Creación de Pestañas Principales ---
 tab_carga, tab_datos, tab_graficos, tab_manual = st.tabs([
-    "📁 Carga de Fajas", 
-    "📊 Planillas y Datos", 
-    "📈 Gráficos de Resistencia", 
+    "📁 Carga de Faja", 
+    "📊 Planilla y Datos", 
+    "📈 Gráfico de Resistencia", 
     "📚 Biblioteca y Manual"
 ])
 
-# Variables de sesión para persistencia entre pestañas
-if 'datos_por_muestra' not in st.session_state:
-    st.session_state['datos_por_muestra'] = {}
-if 'zip_buffer' not in st.session_state:
-    st.session_state['zip_buffer'] = None
+# Variables de sesión para persistencia individual
+if 'df_resultado' not in st.session_state:
+    st.session_state['df_resultado'] = None
+if 'nombre_muestra_actual' not in st.session_state:
+    st.session_state['nombre_muestra_actual'] = "Muestra"
 
 
 # ==========================================
-# 1. PESTAÑA: CARGA DE FAJAS (📁)
+# 1. PESTAÑA: CARGA DE FAJA (📁)
 # ==========================================
 with tab_carga:
-    st.header("📂 Carga Masiva de Imágenes de Fajas")
-    st.markdown("Arrastre o seleccione las fajas escaneadas en formato imagen. Asegúrese de que el nombre de la muestra esté escrito en la parte superior.")
+    st.header("📂 Carga de Faja Individual")
+    st.markdown("Seleccione o arrastre la imagen de la faja digitalizada (de a una por vez). Asegúrese de que las marcas y el nombre de la muestra sean legibles.")
     
-    uploaded_files = st.file_uploader(
-        "Seleccione las imágenes (Formatos: JPG, PNG)", 
-        type=["jpg", "jpeg", "png"], 
-        accept_multiple_files=True
+    uploaded_file = st.file_uploader(
+        "Seleccionar imagen de faja (Formatos: JPG, PNG)", 
+        type=["jpg", "jpeg", "png"]
     )
 
-    if uploaded_files:
-        st.success(f"Se cargaron {len(uploaded_files)} archivos correctamente.")
+    if uploaded_file is not None:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
         
-        if st.button("🚀 Procesar Lote de Fajas", type="primary"):
-            zip_buffer = io.BytesIO()
-            resultados_globales = []
-            st.session_state['datos_por_muestra'] = {}
+        if img is not None:
+            st.image(img, caption="Faja cargada", use_column_width=True)
+            
+            if st.button("🚀 Procesar Faja", type="primary"):
+                h_img, w_img = img.shape
+                zona_superior = img[0:int(h_img * 0.20), 0:w_img]
+                _, thresh_ocr = cv2.threshold(zona_superior, 150, 255, cv2.THRESH_BINARY)
+                nombre_detectado = pytesseract.image_to_string(thresh_ocr, config='--psm 7').strip()
+                
+                nombre_muestra = "".join([c for c in nombre_detectado if c.isalnum() or c in ('_', '-')])
+                if not nombre_muestra:
+                    nombre_muestra = uploaded_file.name.split('.')[0]
 
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for uploaded_file in uploaded_files:
-                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                    img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
-                    
-                    if img is None:
-                        continue
+                st.session_state['nombre_muestra_actual'] = nombre_muestra
 
-                    # OCR para nombre
-                    h_img, w_img = img.shape
-                    zona_superior = img[0:int(h_img * 0.15), 0:w_img]
-                    _, thresh_ocr = cv2.threshold(zona_superior, 150, 255, cv2.THRESH_BINARY)
-                    nombre_detectado = pytesseract.image_to_string(thresh_ocr, config='--psm 7').strip()
-                    
-                    nombre_muestra = "".join([c for c in nombre_detectado if c.isalnum() or c in ('_', '-')])
-                    if not nombre_muestra:
-                        nombre_muestra = uploaded_file.name.split('.')[0]
+                # Procesamiento físico de marcas
+                blur = cv2.GaussianBlur(img, (5, 5), 0)
+                thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+                perfil_proyeccion = np.sum(thresh, axis=1)
+                
+                from scipy.signal import find_peaks
+                picos, _ = find_peaks(perfil_proyeccion, distance=10, prominence=500)
+                
+                profundidades_cm = picos * escala_cm_px
+                profundidades_cm = np.sort(profundidades_cm)
 
-                    # Procesamiento físico
-                    blur = cv2.GaussianBlur(img, (5, 5), 0)
-                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-                    perfil_proyeccion = np.sum(thresh, axis=1)
-                    
-                    from scipy.signal import find_peaks
-                    picos, _ = find_peaks(perfil_proyeccion, distance=10, prominence=500)
-                    
-                    profundidades_cm = picos * escala_cm_px
-                    profundidades_cm = np.sort(profundidades_cm)
-
-                    if len(profundidades_cm) < 2:
-                        continue
-
+                if len(profundidades_cm) >= 2:
                     prof_metros = profundidades_cm / 100.0
                     delta_e = np.diff(prof_metros)
                     delta_e = np.where(delta_e == 0, 0.0001, delta_e)
@@ -156,72 +138,54 @@ with tab_carga:
                     }, inplace=True)
                     df_intervalos.insert(0, 'Muestra', nombre_muestra)
 
-                    # Guardar en ZIP
-                    csv_data = df_intervalos.to_csv(index=False).encode('utf-8')
-                    zip_file.writestr(f"{nombre_muestra}_resumen.csv", csv_data)
-
-                    resultados_globales.append(df_intervalos)
-                    st.session_state['datos_por_muestra'][nombre_muestra] = df_intervalos
-
-                if resultados_globales:
-                    df_total = pd.concat(resultados_globales, ignore_index=True)
-                    zip_file.writestr("consolidado_todas_las_muestras.csv", df_total.to_csv(index=False).encode('utf-8'))
-
-            zip_buffer.seek(0)
-            st.session_state['zip_buffer'] = zip_buffer
-            st.success("🎉 ¡Procesamiento completado con éxito! Diríjase a las pestañas de Datos o Gráficos para inspeccionar los resultados.")
+                    st.session_state['df_resultado'] = df_intervalos
+                    st.success(f"🎉 ¡Faja '{nombre_muestra}' procesada con éxito! Revise las pestañas de Planilla o Gráfico.")
+                else:
+                    st.error("No se detectaron suficientes marcas claras en la faja. Verifique la nitidez o ajuste la calibración.")
 
 
 # ==========================================
-# 2. PESTAÑA: PLANILLAS Y DATOS (📊)
+# 2. PESTAÑA: PLANILLA Y DATOS (📊)
 # ==========================================
 with tab_datos:
-    st.header("📊 Salida de Datos para Análisis Estadístico")
-    st.markdown("Consulte los valores calculados por intervalo de profundidad, listos para ser exportados e integrados en software estadístico (como InfoStat).")
+    st.header("📊 Planilla de Resultados")
+    st.markdown("Valores calculados por intervalo de profundidad para la muestra actual, listos para exportar.")
     
-    if st.session_state['datos_por_muestra']:
-        muestras = list(st.session_state['datos_por_muestra'].keys())
-        muestra_elegida = st.selectbox("Seleccione la muestra para ver la planilla:", muestras, key="sel_datos")
+    if st.session_state['df_resultado'] is not None:
+        st.subheader(f"Muestra: {st.session_state['nombre_muestra_actual']}")
+        st.dataframe(st.session_state['df_resultado'], use_container_width=True)
         
-        df_actual = st.session_state['datos_por_muestra'][muestra_elegida]
-        st.dataframe(df_actual, use_container_width=True)
-        
-        st.markdown("---")
-        st.subheader("📥 Descarga Consolidada")
-        if st.session_state['zip_buffer']:
-            st.download_button(
-                label="📥 Descargar paquete comprimido (.zip con todos los CSV y Gráficos)",
-                data=st.session_state['zip_buffer'],
-                file_name="resultados_penetrometro.zip",
-                mime="application/zip"
-            )
+        csv_bytes = st.session_state['df_resultado'].to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Descargar planilla CSV (para InfoStat)",
+            data=csv_bytes,
+            file_name=f"{st.session_state['nombre_muestra_actual']}_resumen.csv",
+            mime="text/csv"
+        )
     else:
-        st.info("ℹ️ Aún no hay datos procesados. Por favor, cargue y procese las fajas en la pestaña **Carga de Fajas**.")
+        st.info("ℹ️ Cargue y procese una faja en la pestaña **Carga de Faja** para visualizar los datos.")
 
 
 # ==========================================
-# 3. PESTAÑA: GRÁFICOS DE RESISTENCIA (📈)
+# 3. PESTAÑA: GRÁFICO DE RESISTENCIA (📈)
 # ==========================================
 with tab_graficos:
-    st.header("📈 Visualización Gráfica de Resistencia Mecánica")
-    st.markdown("Curvas y perfiles de resistencia a la penetración expresados en Megapascals (MPa).")
+    st.header("📈 Gráfico de Resistencia Mecánica")
+    st.markdown("Perfil de resistencia a la penetración expresado en Megapascals (MPa).")
     
-    if st.session_state['datos_por_muestra']:
-        muestras_g = list(st.session_state['datos_por_muestra'].keys())
-        muestra_g_elegida = st.selectbox("Seleccione la muestra a graficar:", muestras_g, key="sel_graf")
-        
-        df_g = st.session_state['datos_por_muestra'][muestra_g_elegida]
+    if st.session_state['df_resultado'] is not None:
+        df_g = st.session_state['df_resultado']
         
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.barh(df_g['Intervalo'], df_g['Resistencia_Media_MPa'], color='sienna', alpha=0.8)
         ax.set_xlabel('Resistencia Media a la Penetración (MPa)')
         ax.set_ylabel('Intervalo de Profundidad (cm)')
-        ax.set_title(f'Perfil de Resistencia Mecánica - {muestra_g_elegida}')
+        ax.set_title(f'Perfil de Resistencia Mecánica - {st.session_state["nombre_muestra_actual"]}')
         ax.grid(axis='x', linestyle='--', alpha=0.6)
         
         st.pyplot(fig)
     else:
-        st.info("ℹ️ Cargue las imágenes en la pestaña **Carga de Fajas** para habilitar los gráficos.")
+        st.info("ℹ️ Procese una faja en la pestaña **Carga de Faja** para habilitar el gráfico.")
 
 
 # ==========================================
@@ -229,25 +193,24 @@ with tab_graficos:
 # ==========================================
 with tab_manual:
     st.header("📚 Biblioteca Técnica y Manual de Uso")
-    st.markdown("Guía operativa e información de referencia provista por el desarrollador para el correcto uso del sistema.")
+    st.markdown("Guía operativa e información de referencia provista para el procesamiento individual de fajas.")
     
     with st.expander("📖 Manual de Uso Paso a Paso", expanded=True):
         st.markdown("""
-        1. **Preparación a campo:** Escriba claramente el nombre de la muestra en el margen superior de la faja de papel antes de iniciar la lectura.
-        2. **Digitalización:** Escanee o fotografíe las fajas de papel en formato JPG o PNG asegurando buena iluminación y nitidez.
-        3. **Configuración:** Ingrese los parámetros físicos de su equipo (Masa, Altura de caída, Diámetro del cono y Escala de calibración) en el panel lateral izquierdo.
-        4. **Carga masiva:** Ingrese a la pestaña **📁 Carga de Fajas**, arrastre todas las imágenes y presione **Procesar Lote de Fajas**.
-        5. **Análisis:** Revise los resultados en las pestañas de **📊 Planillas y Datos** y **📈 Gráficos de Resistencia**.
-        6. **Exportación:** Descargue el paquete comprimido `.zip` con todos los archivos CSV listos para análisis estadístico en InfoStat.
+        1. **Preparación:** Registre la faja de papel junto a una escala o regla milimetrada.
+        2. **Digitalización:** Tome una fotografía nítida o escanee la faja individualmente en formato JPG o PNG.
+        3. **Configuración:** Ingrese los parámetros físicos de su equipo en el panel lateral izquierdo.
+        4. **Carga:** Ingrese a la pestaña **📁 Carga de Faja**, cargue la imagen y presione **Procesar Faja**.
+        5. **Análisis y Exportación:** Inspeccione la planilla y el gráfico generado, y descargue el archivo CSV para su análisis estadístico.
         """)
         
-    with st.expander("🔬 Fundamento Físico y Bibliografía Recomendada"):
+    with st.expander("🔬 Fundamento Físico y Bibliografía"):
         st.markdown("""
-        * **Fórmula de cálculo dinámico:** La resistencia mecánica ($q_d$) se calcula a partir de la energía cinética del impacto y la sección transversal del cono:
+        * **Fórmula de cálculo dinámico:**
           $$q_d = \\frac{M \\cdot g \\cdot H}{A \\cdot e}$$
-        * **Referencias bibliográficas sugeridas:**
-          * ASAE S313.3: Soil Cone Penetrometer. American Society of Agricultural Engineers.
-          * Restricción física al crecimiento radical y su relación con la resistencia mecánica en suelos agrícolas (Investigaciones INTA).
+        * **Referencias:**
+          * ASAE S313.3: Soil Cone Penetrometer.
+          * Ensayos de resistencia mecánica e investigación de suelos en INTA EEA Corrientes.
         """)
     
     st.markdown("---")
