@@ -28,14 +28,13 @@ st.markdown("""
 st.title("🌾 Penetrómetro de golpes")
 st.markdown("Automatización de ensayos, análisis estadístico por intervalos y registro fotográfico consolidado.")
 
-# --- Panel Lateral de Configuración (Parámetros del Instrumento según Excel) ---
+# --- Panel Lateral de Configuración (Parámetros del Instrumento) ---
 st.sidebar.header("⚙️ Parámetros del Instrumento")
 masa_kg = st.sidebar.number_input("Peso / Masa de la masa (F en kg)", value=2.088, min_value=0.1, step=0.001, format="%.3f")
 carrera_m = st.sidebar.number_input("Distancia o carrera de recorrido (E en m)", value=0.565, min_value=0.01, step=0.001, format="%.3f")
 base_cono_cm = st.sidebar.number_input("Base del cono (cm)", value=2.0, min_value=0.1, step=0.1)
 altura_cono_cm = st.sidebar.number_input("Altura del cono (cm)", value=3.0, min_value=0.1, step=0.1)
 
-# Cálculo de la constante del aparato (F x E)
 constante_aparato = masa_kg * carrera_m
 st.sidebar.info(f"📌 Constante del aparato (F × E): **{constante_aparato:.4f} kg·m**")
 
@@ -76,7 +75,7 @@ with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
     st.markdown("""
     Cargue las **fotografías de las fajas** (puede seleccionar varias a la vez). 
-    * *Sugerencia operativa:* Nómbre previamente cada archivo de foto con la identificación de la muestra (ej: `R1_Rep1.jpg`). El sistema extraerá ese nombre automáticamente.
+    * *Sugerencia operativa:* Nómbre previamente cada archivo de foto con la identificación de la muestra (ej: `Prueba_1.jpg`). El sistema extraerá ese nombre automáticamente.
     """)
     
     uploaded_files = st.file_uploader(
@@ -118,7 +117,7 @@ with tab_carga:
                     bloque_muestra = cv2.vconcat([img_con_etiqueta, separador])
                     imagenes_para_stitch.append(bloque_muestra)
                     
-                    # Calibración automática mediante la regla verde (40 cm)
+                    # 1. Calibración automática mediante la regla verde (40 cm)
                     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
                     lower_green = np.array([35, 40, 40])
                     upper_green = np.array([85, 255, 255])
@@ -127,26 +126,29 @@ with tab_carga:
                     
                     escala_cm_px = 0.05
                     y_inicio_faja = 0
-                    y_fin_faja = int(h_img * 0.4)
+                    y_fin_faja = int(h_img * 0.35)
                     
                     if contours:
                         c_regla = max(contours, key=cv2.contourArea)
                         x_r, y_r, w_r, h_r = cv2.boundingRect(c_regla)
                         if w_r > w_img * 0.3:
                             escala_cm_px = 40.0 / float(w_r)
-                            y_fin_faja = y_r
-                            y_inicio_faja = max(0, y_r - int(h_r * 2.5))
+                            # Aislar exclusivamente la faja superior y evitar cualquier contacto con la regla verde
+                            y_fin_faja = max(10, y_r - 5)
+                            y_inicio_faja = max(0, y_r - int(h_r * 1.8))
 
                     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
                     img_faja = img_gray[y_inicio_faja:y_fin_faja, 0:w_img]
                     if img_faja.shape[0] == 0:
-                        img_faja = img_gray[0:int(h_img*0.4), 0:w_img]
+                        img_faja = img_gray[0:int(h_img*0.35), 0:w_img]
 
-                    blur = cv2.GaussianBlur(img_faja, (3, 3), 0)
-                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+                    # 2. Procesamiento limpio de picos para evitar falsos golpes por ruido
+                    blur = cv2.GaussianBlur(img_faja, (5, 5), 0)
+                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 3)
                     perfil_proyeccion = np.sum(thresh, axis=1)
                     
-                    picos, _ = find_peaks(perfil_proyeccion, distance=8, prominence=300)
+                    # Distancia mínima ampliada para evitar que las marcas cercanas se superpongan
+                    picos, _ = find_peaks(perfil_proyeccion, distance=14, prominence=800)
                     profundidades_cm = picos * escala_cm_px
                     profundidades_cm = np.sort(profundidades_cm)
 
@@ -155,7 +157,6 @@ with tab_carga:
                         delta_e = np.diff(prof_metros)
                         delta_e = np.where(delta_e == 0, 0.0001, delta_e)
 
-                        # Cálculo utilizando la carrera_m (E) corregida
                         g = 9.81
                         energia_golpe = masa_kg * g * carrera_m
                         resistencia_mpa = (energia_golpe / (area_cono_m2 * delta_e)) / 1e6
@@ -168,9 +169,10 @@ with tab_carga:
                             'Resistencia_MPa': resistencia_mpa
                         })
 
+                        # Corte estricto hasta los 30 cm reales
                         df_golpes = df_golpes[df_golpes['Profundidad_Final_cm'] <= 30.0]
 
-                        # Agrupación exacta en los intervalos solicitados (0-10, 10-20 y 20-30 cm)
+                        # Agrupación exacta en los tres intervalos requeridos
                         bins = [0, 10, 20, 30]
                         labels = ["0-10 cm", "10-20 cm", "20-30 cm"]
                         df_golpes['Intervalo'] = pd.cut(df_golpes['Profundidad_Final_cm'], bins=bins, labels=labels, include_lowest=True)
@@ -196,9 +198,9 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado! Ya puede descargar la planilla Excel y consultar el registro visual.")
+                st.success("🎉 ¡Procesamiento completado con éxito! Verifique la planilla y el gráfico.")
             else:
-                st.error("No se pudieron procesar las fotografías. Asegúrese de que las fajas estén enfocadas junto a la regla verde.")
+                st.error("No se pudieron procesar las fotografías. Asegúrese de que las fajas estén enfocadas y nítidas.")
 
 
 # ==========================================
@@ -251,31 +253,32 @@ with tab_registro:
 # ==========================================
 with tab_graficos:
     st.header("📈 Gráfico Comparativo de Resistencia")
-    st.markdown("Perfil comparativo de resistencia media a la penetración por intervalos para todas las muestras procesadas.")
+    st.markdown("Perfil horizontal de resistencia media a la penetración (ordenado de superficie a profundidad).")
     
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
         
         fig, ax = plt.subplots(figsize=(10, 6))
         muestras = df_c['Muestra'].unique()
-        intervalos = df_c['Intervalo'].unique()
+        intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"] # Orden estricto de superficie a profundidad
         
-        x = np.arange(len(intervalos))
-        width = 0.8 / max(len(muestras), 1)
+        y = np.arange(len(intervalos))
+        height = 0.8 / max(len(muestras), 1)
         
         for i, muestra in enumerate(muestras):
             df_m = df_c[df_c['Muestra'] == muestra]
-            y_vals = [df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0] 
+            x_vals = [df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0] 
                       if not df_m[df_m['Intervalo'] == interv].empty else 0 for interv in intervalos]
-            ax.bar(x + i * width, y_vals, width, label=muestra, alpha=0.85)
+            ax.barh(y + i * height, x_vals, height, label=muestra, alpha=0.85)
             
-        ax.set_xlabel('Intervalo de Profundidad')
-        ax.set_ylabel('Resistencia Media a la Penetración (MPa)')
-        ax.set_title('Resistencia Mecánica por Intervalos y Muestras')
-        ax.set_xticks(x + width * (len(muestras) - 1) / 2)
-        ax.set_xticklabels(intervalos)
+        ax.set_ylabel('Intervalo de Profundidad')
+        ax.set_xlabel('Resistencia Media a la Penetración (MPa)')
+        ax.set_title('Perfil de Resistencia Mecánica por Intervalos y Muestras')
+        ax.set_yticks(y + height * (len(muestras) - 1) / 2)
+        ax.set_yticklabels(intervalos)
+        ax.invert_yaxis() # Invierte el eje Y para que 0-10 cm quede arriba y 20-30 cm abajo
         ax.legend(title="Muestras")
-        ax.grid(axis='y', linestyle='--', alpha=0.6)
+        ax.grid(axis='x', linestyle='--', alpha=0.6)
         
         st.pyplot(fig)
     else:
@@ -291,13 +294,13 @@ with tab_manual:
     
     with st.expander("📖 Guía paso a paso para el operario", expanded=True):
         st.markdown("""
-        1. **Configuración:** Verifique en el panel lateral los parámetros físicos del instrumento (Masa F, Carrera E, Base y Altura del cono) para asegurar el cálculo correcto de la constante del aparato.
-        2. **Identificación:** Renombre cada archivo fotográfico con el nombre de la muestra (ej: `R1_Rep1.jpg`).
+        1. **Configuración:** Verifique en el panel lateral los parámetros físicos del instrumento (Masa F, Carrera E, Base y Altura del cono).
+        2. **Identificación:** Renombre cada archivo fotográfico con el nombre de la muestra (ej: `Prueba_1.jpg`).
         3. **Captura:** Tome la foto con la faja apoyada junto a la regla verde de 40 cm.
-        4. **Carga y Procesamiento:** Ingrese a **📸 Carga de Fotografías**, suba todas las imágenes juntas y presione el botón de procesamiento.
+        4. **Carga y Procesamiento:** Ingrese a **📸 Carga de Fotografías**, suba todas las imágenes y presione el botón de procesamiento.
         5. **Salida y Archivo:** 
-           * En **📊 Planilla Excel Consolidada** descargue el archivo `.xlsx` listo para importar en InfoStat.
-           * En **🖼️ Registro Visual** descargue la imagen unificada de respaldo con todas las fajas etiquetadas.
+           * En **📊 Planilla Excel Consolidada** descargue el archivo `.xlsx` listo para InfoStat.
+           * En **📈 Gráfico Comparativo** observe el perfil horizontal ordenado de superficie a profundidad.
         """)
         
     with st.expander("🔬 Fundamento Físico y Referencias"):
