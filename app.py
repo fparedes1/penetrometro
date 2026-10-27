@@ -24,7 +24,7 @@ st.markdown("""
 st.title("🌾 Penetrómetro de golpes")
 st.markdown("Automatización de ensayos por procesamiento digital de líneas de penetración.")
 
-# --- Panel Lateral de Parámetros del Instrumento ---
+# --- Panel Lateral de Parámetros del Instrumento y Sensibilidad ---
 st.sidebar.header("⚙️ Parámetros del Instrumento")
 masa_kg = st.sidebar.number_input("Peso / Masa (F en kg)", value=2.088, min_value=0.1, step=0.001, format="%.3f")
 carrera_m = st.sidebar.number_input("Carrera / Recorrido (E en m)", value=0.565, min_value=0.01, step=0.001, format="%.3f")
@@ -33,6 +33,19 @@ altura_cono_cm = st.sidebar.number_input("Altura del cono (cm)", value=3.0, min_
 
 constante_aparato = masa_kg * carrera_m
 st.sidebar.info(f"📌 Constante del aparato (F × E): **{constante_aparato:.4f} kg·m**")
+
+st.sidebar.markdown("---")
+st.sidebar.header("🎛️ Calibración de Detección")
+sensibilidad_picos = st.sidebar.slider(
+    "Sensibilidad de detección (Prominencia)", 
+    min_value=0.02, max_value=0.40, value=0.10, step=0.02,
+    help="Baje este valor si faltan golpes por detectar; súbalo si detecta marcas falsas o arrugas."
+)
+distancia_minima_px = st.sidebar.slider(
+    "Distancia mínima entre golpes (px)", 
+    min_value=15, max_value=60, value=25, step=5,
+    help="Controla la separación mínima horizontal esperada entre cada golpe."
+)
 
 radio_m = (base_cono_cm / 100.0) / 2.0
 area_cono_m2 = np.pi * (radio_m ** 2)
@@ -65,7 +78,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. El sistema aislará automáticamente la faja blanca de papel ignorando el fondo y detectará las marcas de golpes.")
+    st.markdown("Cargue las fotografías de las fajas. Si nota que algún golpe no se detecta correctamente, ajuste la **Sensibilidad de detección** en la barra lateral izquierda.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -96,7 +109,7 @@ with tab_carga:
                     alto_estandar = int(h_img * ratio)
                     img_res = cv2.resize(img_bgr, (ancho_estandar, alto_estandar))
                     
-                    # --- AISLAMIENTO INTELIGENTE DE LA FAJA DE PAPEL ---
+                    # Aislamiento de la faja de papel
                     gray_full = cv2.cvtColor(img_res, cv2.COLOR_BGR2GRAY)
                     _, thresh_paper = cv2.threshold(gray_full, 190, 255, cv2.THRESH_BINARY)
                     row_sums = np.sum(thresh_paper, axis=1)
@@ -109,26 +122,29 @@ with tab_carga:
                     else:
                         y_min, y_max = int(alto_estandar * 0.2), int(alto_estandar * 0.8)
                     
-                    # Recorte exclusivo de la faja
                     faja_recortada = gray_full[y_min:y_max, :]
                     
-                    # Detección de líneas VERTICALES (marcas de golpes) dentro de la faja aislada
+                    # Procesamiento de líneas verticales
                     blur = cv2.GaussianBlur(faja_recortada, (3, 3), 0)
                     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
                     
-                    # Kernel vertical para aislar trazos de lápiz/birome
                     kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, int((y_max - y_min) * 0.4))))
                     lineas_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
                     
                     perfil_x = np.sum(lineas_v, axis=0)
-                    picos_x, _ = find_peaks(perfil_x, distance=int(ancho_estandar * 0.025), prominence=np.max(perfil_x) * 0.1)
                     
-                    # Dibujar líneas rojas de auditoría sobre la imagen completa
+                    # Aplicación de los parámetros de sensibilidad configurados por el usuario
+                    picos_x, _ = find_peaks(
+                        perfil_x, 
+                        distance=distancia_minima_px, 
+                        prominence=np.max(perfil_x) * sensibilidad_picos
+                    )
+                    
+                    # Dibujar líneas rojas de auditoría
                     img_vis = img_res.copy()
                     for px in picos_x:
                         cv2.line(img_vis, (px, 0), (px, alto_estandar), (0, 0, 255), 2)
                     
-                    # Franja superior con etiqueta y conteo
                     altura_etiqueta = 50
                     franja_etiqueta = np.ones((altura_etiqueta, ancho_estandar, 3), dtype=np.uint8) * 255
                     cv2.putText(franja_etiqueta, f"Muestra: {nombre_muestra} | Golpes detectados: {len(picos_x)}", (20, 35), 
@@ -188,9 +204,9 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado con éxito! Verifique las líneas rojas en Registro Visual, la Planilla Excel y el Gráfico.")
+                st.success("🎉 ¡Procesamiento completado! Revise la pestaña Registro Visual para confirmar que las líneas rojas coinciden con cada golpe.")
             else:
-                st.error("No se pudieron detectar marcas en la faja. Asegúrese de que las líneas verticales sean nítidas.")
+                st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
 
 # ==========================================
@@ -281,11 +297,11 @@ with tab_graficos:
 with tab_manual:
     st.header("📚 Manual Operativo Simplificado")
     
-    with st.expander("📖 Guía de uso", expanded=True):
+    with st.expander("📖 Guía de uso y calibración de sensibilidad", expanded=True):
         st.markdown("""
-        1. **Configuración:** Ajuste los valores del instrumento en la barra lateral.
-        2. **Carga:** Suba la foto de la faja (renombrada con el nombre de muestra).
-        3. **Auditoría:** En **🖼️ Registro Visual**, revise que las líneas rojas coincidan exactamente con cada marca vertical de la faja.
+        1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
+        2. **Control de Sensibilidad:** Si al procesar nota que faltan marcas o se detectan de más, mueva el deslizador de **Sensibilidad de detección** en la barra lateral.
+        3. **Auditoría:** En **🖼️ Registro Visual**, compruebe que las líneas rojas coincidan exactamente con cada marca de la faja (deben detectarse los golpes de 0-10, 10-20 y 20-30 cm).
         4. **Exportación:** Descargue el Excel `.xlsx` listo para InfoStat.
         """)
         
