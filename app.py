@@ -65,7 +65,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. El sistema detectará automáticamente las líneas verticales marcadas a lo largo de la tira de papel de 0 a 30 cm.")
+    st.markdown("Cargue las fotografías de las fajas. El sistema aislará automáticamente la faja blanca de papel ignorando el fondo y detectará las marcas de golpes.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -91,34 +91,44 @@ with tab_carga:
                     nombre_muestra = uploaded_file.name.rsplit('.', 1)[0]
                     h_img, w_img, _ = img_bgr.shape
                     
-                    # 1. Redimensionar para estandarizar
+                    # Redimensionar para estandarizar
                     ratio = ancho_estandar / float(w_img)
                     alto_estandar = int(h_img * ratio)
                     img_res = cv2.resize(img_bgr, (ancho_estandar, alto_estandar))
                     
-                    # 2. Detección de líneas VERTICALES (marcas de golpes)
-                    img_gray = cv2.cvtColor(img_res, cv2.COLOR_BGR2GRAY)
+                    # --- AISLAMIENTO INTELIGENTE DE LA FAJA DE PAPEL ---
+                    gray_full = cv2.cvtColor(img_res, cv2.COLOR_BGR2GRAY)
+                    _, thresh_paper = cv2.threshold(gray_full, 190, 255, cv2.THRESH_BINARY)
+                    row_sums = np.sum(thresh_paper, axis=1)
+                    valid_rows = np.where(row_sums > (ancho_estandar * 0.4))[0]
                     
-                    # Binarización e insensibilidad a arrugas del papel
-                    blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
-                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 19, 5)
+                    if len(valid_rows) > 10:
+                        y_min, y_max = valid_rows[0], valid_rows[-1]
+                        y_min = max(0, y_min - 15)
+                        y_max = min(alto_estandar, y_max + 15)
+                    else:
+                        y_min, y_max = int(alto_estandar * 0.2), int(alto_estandar * 0.8)
                     
-                    # Kernel vertical para resaltar exclusivamente líneas verticales (las marcas de golpes)
-                    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, int(alto_estandar * 0.3)))
+                    # Recorte exclusivo de la faja
+                    faja_recortada = gray_full[y_min:y_max, :]
+                    
+                    # Detección de líneas VERTICALES (marcas de golpes) dentro de la faja aislada
+                    blur = cv2.GaussianBlur(faja_recortada, (3, 3), 0)
+                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+                    
+                    # Kernel vertical para aislar trazos de lápiz/birome
+                    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, int((y_max - y_min) * 0.4))))
                     lineas_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
                     
-                    # Perfil de proyección VERTICAL (suma a lo largo de las columnas)
                     perfil_x = np.sum(lineas_v, axis=0)
+                    picos_x, _ = find_peaks(perfil_x, distance=int(ancho_estandar * 0.025), prominence=np.max(perfil_x) * 0.1)
                     
-                    # Detección de picos en X (posición horizontal de cada marca de golpe)
-                    picos_x, _ = find_peaks(perfil_x, distance=int(ancho_estandar * 0.02), prominence=np.max(perfil_x) * 0.15)
-                    
-                    # Dibujar detección sobre la imagen para el Registro Visual
+                    # Dibujar líneas rojas de auditoría sobre la imagen completa
                     img_vis = img_res.copy()
                     for px in picos_x:
                         cv2.line(img_vis, (px, 0), (px, alto_estandar), (0, 0, 255), 2)
                     
-                    # Etiqueta con el nombre de la muestra
+                    # Franja superior con etiqueta y conteo
                     altura_etiqueta = 50
                     franja_etiqueta = np.ones((altura_etiqueta, ancho_estandar, 3), dtype=np.uint8) * 255
                     cv2.putText(franja_etiqueta, f"Muestra: {nombre_muestra} | Golpes detectados: {len(picos_x)}", (20, 35), 
@@ -132,14 +142,12 @@ with tab_carga:
                         x_fin = picos_x[-1]
                         distancia_px = x_fin - x_inicio
                         
-                        # La distancia total de la faja fotografiada representa 30 cm de ensayo
                         escala_cm_px = 30.0 / float(distancia_px) if distancia_px > 0 else 0.05
-                        
                         posiciones_cm = (picos_x - x_inicio) * escala_cm_px
                         
                         prof_metros = posiciones_cm / 100.0
                         delta_e = np.diff(prof_metros)
-                        delta_e = np.where(delta_e <= 0, 0.001, delta_e) # Evitar división por cero
+                        delta_e = np.where(delta_e <= 0, 0.001, delta_e)
 
                         g = 9.81
                         energia_golpe = masa_kg * g * carrera_m
@@ -153,7 +161,6 @@ with tab_carga:
                             'Resistencia_MPa': resistencia_mpa
                         })
 
-                        # Filtrar dentro del rango de 0 a 30 cm
                         df_golpes = df_golpes[df_golpes['Profundidad_Final_cm'] <= 30.0]
 
                         bins = [0, 10, 20, 30]
@@ -181,9 +188,9 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado con éxito! Verifique las marcas rojas en la pestaña Registro Visual, la Planilla Excel y el Gráfico.")
+                st.success("🎉 ¡Procesamiento completado con éxito! Verifique las líneas rojas en Registro Visual, la Planilla Excel y el Gráfico.")
             else:
-                st.error("No se pudieron detectar marcas en la faja. Asegúrese de que las líneas verticales estén bien marcadas.")
+                st.error("No se pudieron detectar marcas en la faja. Asegúrese de que las líneas verticales sean nítidas.")
 
 
 # ==========================================
@@ -278,7 +285,7 @@ with tab_manual:
         st.markdown("""
         1. **Configuración:** Ajuste los valores del instrumento en la barra lateral.
         2. **Carga:** Suba la foto de la faja (renombrada con el nombre de muestra).
-        3. **Auditoría:** En **🖼️ Registro Visual**, revise que las líneas rojas coincidan con cada marca vertical trazada.
+        3. **Auditoría:** En **🖼️ Registro Visual**, revise que las líneas rojas coincidan exactamente con cada marca vertical de la faja.
         4. **Exportación:** Descargue el Excel `.xlsx` listo para InfoStat.
         """)
         
