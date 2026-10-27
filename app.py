@@ -155,9 +155,9 @@ with tab_carga:
                         delta_e = np.diff(prof_metros)
                         delta_e = np.where(delta_e == 0, 0.0001, delta_e)
 
-                        # Cálculo basado en la fórmula del Excel: f = (F * E) / e (en kg) y luego a MPa
+                        # Cálculo utilizando la carrera_m (E) corregida
                         g = 9.81
-                        energia_golpe = masa_kg * g * altura_caida_m
+                        energia_golpe = masa_kg * g * carrera_m
                         resistencia_mpa = (energia_golpe / (area_cono_m2 * delta_e)) / 1e6
 
                         df_golpes = pd.DataFrame({
