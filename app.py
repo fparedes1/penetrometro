@@ -6,32 +6,28 @@ import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 import io
 
-# Configuración de la página y diseño
+# Configuración de la página
 st.set_page_config(
     page_title="Penetrómetro de golpes - INTA EEA Corrientes", 
     page_icon="🌾", 
     layout="wide"
 )
 
-# --- Estilos CSS personalizados ---
+# Estilos CSS
 st.markdown("""
     <style>
-    .main {
-        background-color: #f9fbfc;
-    }
-    .stSidebar {
-        background-color: #f1f5f9;
-    }
+    .main { background-color: #f9fbfc; }
+    .stSidebar { background-color: #f1f5f9; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🌾 Penetrómetro de golpes")
-st.markdown("Automatización de ensayos, análisis estadístico por intervalos y registro fotográfico consolidado.")
+st.markdown("Automatización de ensayos por procesamiento digital de líneas de penetración.")
 
-# --- Panel Lateral de Configuración (Parámetros del Instrumento) ---
+# --- Panel Lateral de Parámetros del Instrumento ---
 st.sidebar.header("⚙️ Parámetros del Instrumento")
-masa_kg = st.sidebar.number_input("Peso / Masa de la masa (F en kg)", value=2.088, min_value=0.1, step=0.001, format="%.3f")
-carrera_m = st.sidebar.number_input("Distancia o carrera de recorrido (E en m)", value=0.565, min_value=0.01, step=0.001, format="%.3f")
+masa_kg = st.sidebar.number_input("Peso / Masa (F en kg)", value=2.088, min_value=0.1, step=0.001, format="%.3f")
+carrera_m = st.sidebar.number_input("Carrera / Recorrido (E en m)", value=0.565, min_value=0.01, step=0.001, format="%.3f")
 base_cono_cm = st.sidebar.number_input("Base del cono (cm)", value=2.0, min_value=0.1, step=0.1)
 altura_cono_cm = st.sidebar.number_input("Altura del cono (cm)", value=3.0, min_value=0.1, step=0.1)
 
@@ -41,18 +37,15 @@ st.sidebar.info(f"📌 Constante del aparato (F × E): **{constante_aparato:.4f}
 radio_m = (base_cono_cm / 100.0) / 2.0
 area_cono_m2 = np.pi * (radio_m ** 2)
 
-# Créditos discretos en el pie del panel lateral
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "<div style='font-size: 0.8em; color: gray; text-align: center;'>"
-    "Desarrollado por:<br>"
-    "<b>Ing. Agr. (Mgter.) Federico A. Paredes</b><br>"
-    "<a href='mailto:paredesfedericoantonio@gmail.com'>paredesfedericoantonio@gmail.com</a>"
-    "</div>", 
+    "Desarrollado por:<br><b>Ing. Agr. (Mgter.) Federico A. Paredes</b><br>"
+    "<a href='mailto:paredesfedericoantonio@gmail.com'>paredesfedericoantonio@gmail.com</a></div>", 
     unsafe_allow_html=True
 )
 
-# --- Creación de Pestañas Principales ---
+# --- Pestañas Principales ---
 tab_carga, tab_datos, tab_registro, tab_graficos, tab_manual = st.tabs([
     "📸 Carga de Fotografías", 
     "📊 Planilla Excel Consolidada", 
@@ -61,7 +54,6 @@ tab_carga, tab_datos, tab_registro, tab_graficos, tab_manual = st.tabs([
     "📚 Manual Operativo"
 ])
 
-# Variables de sesión para persistencia de datos
 if 'df_consolidado' not in st.session_state:
     st.session_state['df_consolidado'] = None
 if 'imagen_registro_bytes' not in st.session_state:
@@ -69,30 +61,27 @@ if 'imagen_registro_bytes' not in st.session_state:
 
 
 # ==========================================
-# 1. PESTAÑA: CARGA DE FOTOGRAFÍAS (📸)
+# 1. PESTAÑA: CARGA DE FOTOGRAFÍAS
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("""
-    Cargue las **fotografías de las fajas** (puede seleccionar varias a la vez). 
-    * *Sugerencia operativa:* Nómbre previamente cada archivo de foto con la identificación de la muestra (ej: `Prueba_1.jpg`). El sistema extraerá ese nombre automáticamente.
-    """)
+    st.markdown("Cargue las fotografías de las fajas. El sistema detectará automáticamente las líneas verticales marcadas a lo largo de la tira de papel de 0 a 30 cm.")
     
     uploaded_files = st.file_uploader(
-        "Seleccionar imágenes de fajas (Formatos: JPG, PNG)", 
+        "Seleccionar imágenes de fajas (JPG, PNG)", 
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
     if uploaded_files:
-        st.info(f"Se han cargado {len(uploaded_files)} fotografía(s) listas para procesamiento automático.")
+        st.info(f"Se cargaron {len(uploaded_files)} imagen(es) para procesar.")
         
-        if st.button("🚀 Procesar Fotografías y Generar Planilla/Registro", type="primary"):
+        if st.button("🚀 Procesar Fajas Automáticamente", type="primary"):
             lista_resultados = []
             imagenes_para_stitch = []
             barra_progreso = st.progress(0)
             
-            ancho_estandar = 1200
+            ancho_estandar = 1400
             
             for i, uploaded_file in enumerate(uploaded_files):
                 file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -102,60 +91,55 @@ with tab_carga:
                     nombre_muestra = uploaded_file.name.rsplit('.', 1)[0]
                     h_img, w_img, _ = img_bgr.shape
                     
-                    # Preparar imagen para el registro visual combinando una etiqueta con el nombre
+                    # 1. Redimensionar para estandarizar
                     ratio = ancho_estandar / float(w_img)
                     alto_estandar = int(h_img * ratio)
-                    img_redimensionada = cv2.resize(img_bgr, (ancho_estandar, alto_estandar))
+                    img_res = cv2.resize(img_bgr, (ancho_estandar, alto_estandar))
                     
-                    altura_etiqueta = 60
+                    # 2. Detección de líneas VERTICALES (marcas de golpes)
+                    img_gray = cv2.cvtColor(img_res, cv2.COLOR_BGR2GRAY)
+                    
+                    # Binarización e insensibilidad a arrugas del papel
+                    blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
+                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 19, 5)
+                    
+                    # Kernel vertical para resaltar exclusivamente líneas verticales (las marcas de golpes)
+                    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, int(alto_estandar * 0.3)))
+                    lineas_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
+                    
+                    # Perfil de proyección VERTICAL (suma a lo largo de las columnas)
+                    perfil_x = np.sum(lineas_v, axis=0)
+                    
+                    # Detección de picos en X (posición horizontal de cada marca de golpe)
+                    picos_x, _ = find_peaks(perfil_x, distance=int(ancho_estandar * 0.02), prominence=np.max(perfil_x) * 0.15)
+                    
+                    # Dibujar detección sobre la imagen para el Registro Visual
+                    img_vis = img_res.copy()
+                    for px in picos_x:
+                        cv2.line(img_vis, (px, 0), (px, alto_estandar), (0, 0, 255), 2)
+                    
+                    # Etiqueta con el nombre de la muestra
+                    altura_etiqueta = 50
                     franja_etiqueta = np.ones((altura_etiqueta, ancho_estandar, 3), dtype=np.uint8) * 255
-                    cv2.putText(franja_etiqueta, f"Muestra: {nombre_muestra}", (20, 40), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (40, 40, 40), 2, cv2.LINE_AA)
+                    cv2.putText(franja_etiqueta, f"Muestra: {nombre_muestra} | Golpes detectados: {len(picos_x)}", (20, 35), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (30, 30, 30), 2, cv2.LINE_AA)
                     
-                    img_con_etiqueta = cv2.vconcat([franja_etiqueta, img_redimensionada])
-                    separador = np.ones((15, ancho_estandar, 3), dtype=np.uint8) * 220
-                    bloque_muestra = cv2.vconcat([img_con_etiqueta, separador])
+                    bloque_muestra = cv2.vconcat([franja_etiqueta, img_vis, np.ones((15, ancho_estandar, 3), dtype=np.uint8)*220])
                     imagenes_para_stitch.append(bloque_muestra)
-                    
-                    # 1. Calibración automática mediante la regla verde (40 cm)
-                    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-                    lower_green = np.array([35, 40, 40])
-                    upper_green = np.array([85, 255, 255])
-                    mask_green = cv2.inRange(hsv, lower_green, upper_green)
-                    contours, _ = cv2.findContours(mask_green, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    escala_cm_px = 0.05
-                    y_inicio_faja = 0
-                    y_fin_faja = int(h_img * 0.35)
-                    
-                    if contours:
-                        c_regla = max(contours, key=cv2.contourArea)
-                        x_r, y_r, w_r, h_r = cv2.boundingRect(c_regla)
-                        if w_r > w_img * 0.3:
-                            escala_cm_px = 40.0 / float(w_r)
-                            # Aislar exclusivamente la faja superior y evitar cualquier contacto con la regla verde
-                            y_fin_faja = max(10, y_r - 5)
-                            y_inicio_faja = max(0, y_r - int(h_r * 1.8))
 
-                    img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-                    img_faja = img_gray[y_inicio_faja:y_fin_faja, 0:w_img]
-                    if img_faja.shape[0] == 0:
-                        img_faja = img_gray[0:int(h_img*0.35), 0:w_img]
-
-                    # 2. Procesamiento limpio de picos para evitar falsos golpes por ruido
-                    blur = cv2.GaussianBlur(img_faja, (5, 5), 0)
-                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 3)
-                    perfil_proyeccion = np.sum(thresh, axis=1)
-                    
-                    # Distancia mínima ampliada para evitar que las marcas cercanas se superpongan
-                    picos, _ = find_peaks(perfil_proyeccion, distance=14, prominence=800)
-                    profundidades_cm = picos * escala_cm_px
-                    profundidades_cm = np.sort(profundidades_cm)
-
-                    if len(profundidades_cm) >= 2:
-                        prof_metros = profundidades_cm / 100.0
+                    if len(picos_x) >= 2:
+                        x_inicio = picos_x[0]
+                        x_fin = picos_x[-1]
+                        distancia_px = x_fin - x_inicio
+                        
+                        # La distancia total de la faja fotografiada representa 30 cm de ensayo
+                        escala_cm_px = 30.0 / float(distancia_px) if distancia_px > 0 else 0.05
+                        
+                        posiciones_cm = (picos_x - x_inicio) * escala_cm_px
+                        
+                        prof_metros = posiciones_cm / 100.0
                         delta_e = np.diff(prof_metros)
-                        delta_e = np.where(delta_e == 0, 0.0001, delta_e)
+                        delta_e = np.where(delta_e <= 0, 0.001, delta_e) # Evitar división por cero
 
                         g = 9.81
                         energia_golpe = masa_kg * g * carrera_m
@@ -164,15 +148,14 @@ with tab_carga:
                         df_golpes = pd.DataFrame({
                             'Muestra': nombre_muestra,
                             'Golpe': range(1, len(delta_e) + 1),
-                            'Profundidad_Final_cm': profundidades_cm[1:],
+                            'Profundidad_Final_cm': posiciones_cm[1:],
                             'Penetracion_cm': delta_e * 100,
                             'Resistencia_MPa': resistencia_mpa
                         })
 
-                        # Corte estricto hasta los 30 cm reales
+                        # Filtrar dentro del rango de 0 a 30 cm
                         df_golpes = df_golpes[df_golpes['Profundidad_Final_cm'] <= 30.0]
 
-                        # Agrupación exacta en los tres intervalos requeridos
                         bins = [0, 10, 20, 30]
                         labels = ["0-10 cm", "10-20 cm", "20-30 cm"]
                         df_golpes['Intervalo'] = pd.cut(df_golpes['Profundidad_Final_cm'], bins=bins, labels=labels, include_lowest=True)
@@ -198,17 +181,17 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado con éxito! Verifique la planilla y el gráfico.")
+                st.success("🎉 ¡Procesamiento completado con éxito! Verifique las marcas rojas en la pestaña Registro Visual, la Planilla Excel y el Gráfico.")
             else:
-                st.error("No se pudieron procesar las fotografías. Asegúrese de que las fajas estén enfocadas y nítidas.")
+                st.error("No se pudieron detectar marcas en la faja. Asegúrese de que las líneas verticales estén bien marcadas.")
 
 
 # ==========================================
-# 2. PESTAÑA: PLANILLA EXCEL CONSOLIDADA (📊)
+# 2. PESTAÑA: PLANILLA EXCEL CONSOLIDADA
 # ==========================================
 with tab_datos:
     st.header("📊 Planilla Excel para Análisis Estadístico")
-    st.markdown("Resumen calculado automáticamente por muestra y los intervalos requeridos (**0-10 cm, 10-20 cm y 20-30 cm**).")
+    st.markdown("Resumen calculado por muestra y los intervalos de profundidad (**0-10 cm, 10-20 cm y 20-30 cm**).")
     
     if st.session_state['df_consolidado'] is not None:
         st.dataframe(st.session_state['df_consolidado'], use_container_width=True)
@@ -225,42 +208,42 @@ with tab_datos:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.info("ℹ️ Cargue y procese las fotografías en la pestaña **Carga de Fotografías** para generar la planilla Excel.")
+        st.info("ℹ️ Cargue y procese fotografías para visualizar la planilla.")
 
 
 # ==========================================
-# 3. PESTAÑA: REGISTRO VISUAL (🖼️)
+# 3. PESTAÑA: REGISTRO VISUAL
 # ==========================================
 with tab_registro:
-    st.header("🖼️ Registro Visual Consolidado de Fajas")
-    st.markdown("Imagen única que combina secuencialmente todas las fotografías analizadas con sus respectivas etiquetas.")
+    st.header("🖼️ Registro Visual Consolidado con Detección de Golpes")
+    st.markdown("Muestra las líneas rojas verticales sobre cada marca detectada para auditar visualmente el conteo.")
     
     if st.session_state['imagen_registro_bytes'] is not None:
-        st.image(st.session_state['imagen_registro_bytes'], caption="Registro fotográfico unificado de fajas", use_column_width=True)
+        st.image(st.session_state['imagen_registro_bytes'], caption="Verificación fotográfica de golpes detectados (Líneas rojas)", use_column_width=True)
         
         st.download_button(
-            label="📥 Descargar imagen de registro unificada (JPG)",
+            label="📥 Descargar registro visual unificado (JPG)",
             data=st.session_state['imagen_registro_bytes'],
             file_name="registro_fotografico_fajas.jpg",
             mime="image/jpeg"
         )
     else:
-        st.info("ℹ️ Procese las fotografías en la pestaña **Carga de Fotografías** para habilitar el registro visual.")
+        st.info("ℹ️ Procese fotografías para habilitar el registro visual.")
 
 
 # ==========================================
-# 4. PESTAÑA: GRÁFICO COMPARATIVO (📈)
+# 4. PESTAÑA: GRÁFICO COMPARATIVO
 # ==========================================
 with tab_graficos:
     st.header("📈 Gráfico Comparativo de Resistencia")
-    st.markdown("Perfil horizontal de resistencia media a la penetración (ordenado de superficie a profundidad).")
+    st.markdown("Perfil horizontal de resistencia media a la penetración (de superficie a profundidad).")
     
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
         
         fig, ax = plt.subplots(figsize=(10, 6))
         muestras = df_c['Muestra'].unique()
-        intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"] # Orden estricto de superficie a profundidad
+        intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"]
         
         y = np.arange(len(intervalos))
         height = 0.8 / max(len(muestras), 1)
@@ -268,7 +251,7 @@ with tab_graficos:
         for i, muestra in enumerate(muestras):
             df_m = df_c[df_c['Muestra'] == muestra]
             x_vals = [df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0] 
-                      if not df_m[df_m['Intervalo'] == interv].empty else 0 for interv in intervalos]
+                      if not df_m[df_m['Intervalo'] == interv].empty and not pd.isna(df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0]) else 0 for interv in intervalos]
             ax.barh(y + i * height, x_vals, height, label=muestra, alpha=0.85)
             
         ax.set_ylabel('Intervalo de Profundidad')
@@ -276,47 +259,33 @@ with tab_graficos:
         ax.set_title('Perfil de Resistencia Mecánica por Intervalos y Muestras')
         ax.set_yticks(y + height * (len(muestras) - 1) / 2)
         ax.set_yticklabels(intervalos)
-        ax.invert_yaxis() # Invierte el eje Y para que 0-10 cm quede arriba y 20-30 cm abajo
+        ax.invert_yaxis()
         ax.legend(title="Muestras")
         ax.grid(axis='x', linestyle='--', alpha=0.6)
         
         st.pyplot(fig)
     else:
-        st.info("ℹ️ Procese las fotografías para habilitar el gráfico comparativo.")
+        st.info("ℹ️ Procese fotografías para habilitar el gráfico comparativo.")
 
 
 # ==========================================
-# 5. PESTAÑA: MANUAL OPERATIVO (📚)
+# 5. PESTAÑA: MANUAL OPERATIVO
 # ==========================================
 with tab_manual:
     st.header("📚 Manual Operativo Simplificado")
-    st.markdown("Instrucciones rápidas para el personal encargado de la toma de registros y procesamiento.")
     
-    with st.expander("📖 Guía paso a paso para el operario", expanded=True):
+    with st.expander("📖 Guía de uso", expanded=True):
         st.markdown("""
-        1. **Configuración:** Verifique en el panel lateral los parámetros físicos del instrumento (Masa F, Carrera E, Base y Altura del cono).
-        2. **Identificación:** Renombre cada archivo fotográfico con el nombre de la muestra (ej: `Prueba_1.jpg`).
-        3. **Captura:** Tome la foto con la faja apoyada junto a la regla verde de 40 cm.
-        4. **Carga y Procesamiento:** Ingrese a **📸 Carga de Fotografías**, suba todas las imágenes y presione el botón de procesamiento.
-        5. **Salida y Archivo:** 
-           * En **📊 Planilla Excel Consolidada** descargue el archivo `.xlsx` listo para InfoStat.
-           * En **📈 Gráfico Comparativo** observe el perfil horizontal ordenado de superficie a profundidad.
+        1. **Configuración:** Ajuste los valores del instrumento en la barra lateral.
+        2. **Carga:** Suba la foto de la faja (renombrada con el nombre de muestra).
+        3. **Auditoría:** En **🖼️ Registro Visual**, revise que las líneas rojas coincidan con cada marca vertical trazada.
+        4. **Exportación:** Descargue el Excel `.xlsx` listo para InfoStat.
         """)
         
-    with st.expander("🔬 Fundamento Físico y Referencias"):
-        st.markdown("""
-        * **Cálculo dinámico aplicado:**
-          $$q_d = \\frac{M \\cdot g \\cdot H}{A \\cdot e}$$
-        * **Referencias metodológicas:**
-          * ASAE S313.3: Soil Cone Penetrometer.
-          * Área de Recursos Naturales y Extensión Rural - INTA EEA Corrientes.
-        """)
-    
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: #555;'>"
         "Desarrollado institucionalmente para el INTA EEA Corrientes.<br>"
-        "Contacto: <b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)"
-        "</div>", 
+        "Contacto: <b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
         unsafe_allow_html=True
     )
