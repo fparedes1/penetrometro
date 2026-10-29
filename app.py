@@ -303,7 +303,7 @@ with tab_manual:
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: #555;'>"
-        "Desarrollado por.<br>"
-        "Contacto: <b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
+        "Desarrollado por:<br>"
+        "<b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
         unsafe_allow_html=True
     )
