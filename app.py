@@ -8,7 +8,7 @@ import io
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Penetrómetro de golpes - INTA EEA Corrientes", 
+    page_title="Resistencia mecánica a la penetración de raíces - INTA EEA Corrientes", 
     page_icon="🌾", 
     layout="wide"
 )
@@ -21,8 +21,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🌾 Penetrómetro de golpes")
-st.markdown("Automatización de ensayos por procesamiento digital de líneas de penetración.")
+st.title("🌾 Resistencia mecánica a la penetración de raíces")
+st.markdown("Procesamiento de mediciones a campo con penetrómetro de golpes.")
 
 # --- Panel Lateral de Parámetros del Instrumento y Sensibilidad ---
 st.sidebar.header("⚙️ Parámetros del Instrumento")
@@ -58,11 +58,11 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# --- Pestañas Principales ---
+# --- Pestañas Principales (con los nuevos nombres solicitados) ---
 tab_carga, tab_datos, tab_registro, tab_graficos, tab_manual = st.tabs([
-    "📸 Carga de Fotografías", 
-    "📊 Planilla Excel Consolidada", 
-    "🖼️ Registro Visual", 
+    "📸 Carga de imágenes", 
+    "📊 Planillas resumen", 
+    "🖼️ Registro visual", 
     "📈 Gráfico Comparativo", 
     "📚 Manual Operativo"
 ])
@@ -74,7 +74,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 
 
 # ==========================================
-# 1. PESTAÑA: CARGA DE FOTOGRAFÍAS
+# 1. PESTAÑA: CARGA DE IMÁGENES
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
@@ -104,12 +104,10 @@ with tab_carga:
                     nombre_muestra = uploaded_file.name.rsplit('.', 1)[0]
                     h_img, w_img, _ = img_bgr.shape
                     
-                    # Redimensionar para estandarizar
                     ratio = ancho_estandar / float(w_img)
                     alto_estandar = int(h_img * ratio)
                     img_res = cv2.resize(img_bgr, (ancho_estandar, alto_estandar))
                     
-                    # Aislamiento de la faja de papel
                     gray_full = cv2.cvtColor(img_res, cv2.COLOR_BGR2GRAY)
                     _, thresh_paper = cv2.threshold(gray_full, 190, 255, cv2.THRESH_BINARY)
                     row_sums = np.sum(thresh_paper, axis=1)
@@ -124,7 +122,6 @@ with tab_carga:
                     
                     faja_recortada = gray_full[y_min:y_max, :]
                     
-                    # Procesamiento de líneas verticales
                     blur = cv2.GaussianBlur(faja_recortada, (3, 3), 0)
                     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
                     
@@ -133,14 +130,12 @@ with tab_carga:
                     
                     perfil_x = np.sum(lineas_v, axis=0)
                     
-                    # Aplicación de los parámetros de sensibilidad configurados por el usuario
                     picos_x, _ = find_peaks(
                         perfil_x, 
                         distance=distancia_minima_px, 
                         prominence=np.max(perfil_x) * sensibilidad_picos
                     )
                     
-                    # Dibujar líneas rojas de auditoría
                     img_vis = img_res.copy()
                     for px in picos_x:
                         cv2.line(img_vis, (px, 0), (px, alto_estandar), (0, 0, 255), 2)
@@ -204,16 +199,16 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado! Revise la pestaña Registro Visual para confirmar que las líneas rojas coinciden con cada golpe.")
+                st.success("🎉 ¡Procesamiento completado! Revise la pestaña Registro visual para confirmar que las líneas rojas coinciden con cada golpe.")
             else:
                 st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
 
 # ==========================================
-# 2. PESTAÑA: PLANILLA EXCEL CONSOLIDADA
+# 2. PESTAÑA: PLANILLAS RESUMEN
 # ==========================================
 with tab_datos:
-    st.header("📊 Planilla Excel para Análisis Estadístico")
+    st.header("📊 Planillas resumen para análisis estadístico")
     st.markdown("Resumen calculado por muestra y los intervalos de profundidad (**0-10 cm, 10-20 cm y 20-30 cm**).")
     
     if st.session_state['df_consolidado'] is not None:
@@ -238,7 +233,7 @@ with tab_datos:
 # 3. PESTAÑA: REGISTRO VISUAL
 # ==========================================
 with tab_registro:
-    st.header("🖼️ Registro Visual Consolidado con Detección de Golpes")
+    st.header("🖼️ Registro visual de la detección de golpes")
     st.markdown("Muestra las líneas rojas verticales sobre cada marca detectada para auditar visualmente el conteo.")
     
     if st.session_state['imagen_registro_bytes'] is not None:
@@ -301,14 +296,14 @@ with tab_manual:
         st.markdown("""
         1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
         2. **Control de Sensibilidad:** Si al procesar nota que faltan marcas o se detectan de más, mueva el deslizador de **Sensibilidad de detección** en la barra lateral.
-        3. **Auditoría:** En **🖼️ Registro Visual**, compruebe que las líneas rojas coincidan exactamente con cada marca de la faja (deben detectarse los golpes de 0-10, 10-20 y 20-30 cm).
+        3. **Auditoría:** En **🖼️ Registro visual**, compruebe que las líneas rojas coincidan exactamente con cada marca de la faja.
         4. **Exportación:** Descargue el Excel `.xlsx` listo para InfoStat.
         """)
         
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: #555;'>"
-        "Desarrollado institucionalmente para el INTA EEA Corrientes.<br>"
+        "Desarrollado por.<br>"
         "Contacto: <b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
         unsafe_allow_html=True
     )
