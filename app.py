@@ -58,17 +58,20 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# --- Pestañas Principales ---
-tab_carga, tab_datos, tab_registro, tab_graficos, tab_manual = st.tabs([
+# --- Pestañas Principales (incluyendo la nueva pestaña "Perfil de RMP") ---
+tab_carga, tab_datos, tab_registro, tab_perfil, tab_graficos, tab_manual = st.tabs([
     "📸 Carga de imágenes", 
     "📊 Planillas resumen", 
     "🖼️ Registro visual", 
+    "📉 Perfil de RMP",
     "📈 Gráfico Comparativo", 
     "📚 Manual Operativo"
 ])
 
 if 'df_consolidado' not in st.session_state:
     st.session_state['df_consolidado'] = None
+if 'df_golpes_todos' not in st.session_state:
+    st.session_state['df_golpes_todos'] = None
 if 'imagen_registro_bytes' not in st.session_state:
     st.session_state['imagen_registro_bytes'] = None
 
@@ -78,7 +81,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo automático de los golpes que cruzan los límites de profundidad (0-10, 10-20 y 20-30 cm).")
+    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo por intervalos y almacena el detalle golpe a golpe para los perfiles continuos.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -91,6 +94,7 @@ with tab_carga:
         
         if st.button("🚀 Procesar Fajas Automáticamente", type="primary"):
             lista_resultados = []
+            lista_golpes_detallados = []
             imagenes_para_stitch = []
             barra_progreso = st.progress(0)
             
@@ -156,14 +160,25 @@ with tab_carga:
                         escala_cm_px = 30.0 / float(distancia_px) if distancia_px > 0 else 0.05
                         posiciones_cm = (picos_x - x_inicio) * escala_cm_px
                         
-                        # Construcción de golpes individuales con profundidad inicial y final
                         prof_iniciales = posiciones_cm[:-1]
                         prof_finales = posiciones_cm[1:]
                         
                         g = 9.81
                         energia_golpe = masa_kg * g * carrera_m
                         
-                        # Algoritmo de Prorrateo por Intervalos (0-10, 10-20, 20-30 cm)
+                        # Detalle golpe a golpe para el perfil continuo
+                        delta_e_detalles = np.diff(posiciones_cm) / 100.0
+                        delta_e_detalles = np.where(delta_e_detalles <= 0, 0.001, delta_e_detalles)
+                        res_detalles = (energia_golpe / (area_cono_m2 * delta_e_detalles)) / 1e6
+                        
+                        df_golpes_indiv = pd.DataFrame({
+                            'Muestra': nombre_muestra,
+                            'Profundidad_Final_cm': posiciones_cm[1:],
+                            'Resistencia_MPa': res_detalles
+                        })
+                        lista_golpes_detallados.append(df_golpes_indiv)
+                        
+                        # Prorrateo por intervalos (0-10, 10-20, 20-30 cm)
                         limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
                         registros_intervalo = []
                         
@@ -172,12 +187,11 @@ with tab_carga:
                             suma_fraccion_golpes = 0.0
                             
                             for z_i, z_f in zip(prof_iniciales, prof_finales):
-                                # Calcular intersección del golpe [z_i, z_f] con el intervalo [z_inf, z_sup]
                                 overlap_ini = max(z_i, z_inf)
                                 overlap_fin = min(z_f, z_sup)
                                 
                                 if overlap_fin > overlap_ini:
-                                    delta_e_overlap = (overlap_fin - overlap_ini) / 100.0 # en metros
+                                    delta_e_overlap = (overlap_fin - overlap_ini) / 100.0
                                     delta_e_total = max(0.0001, (z_f - z_i) / 100.0)
                                     
                                     if delta_e_overlap > 0:
@@ -187,17 +201,14 @@ with tab_carga:
                                         suma_resist_parcial += resistencia_golpe_mpa * fraccion
                                         suma_fraccion_golpes += fraccion
                             
-                            if suma_fraccion_golpes > 0:
-                                res_media = suma_resist_parcial / suma_fraccion_golpes
-                            else:
-                                res_media = 0.0
+                            res_media = suma_resist_parcial / suma_fraccion_golpes if suma_fraccion_golpes > 0 else 0.0
                                 
                             registros_intervalo.append({
                                 'Muestra': nombre_muestra,
                                 'Intervalo': nombre_int,
                                 'Resistencia_Media_MPa': res_media,
                                 'Total_Golpes': round(suma_fraccion_golpes, 2),
-                                'Resistencia_Max_MPa': res_media # o calculado de la misma forma si se requiere
+                                'Resistencia_Max_MPa': res_media
                             })
                         
                         df_intervalos = pd.DataFrame(registros_intervalo)
@@ -207,12 +218,13 @@ with tab_carga:
             
             if lista_resultados and imagenes_para_stitch:
                 st.session_state['df_consolidado'] = pd.concat(lista_resultados, ignore_index=True)
+                st.session_state['df_golpes_todos'] = pd.concat(lista_golpes_detallados, ignore_index=True)
                 
                 imagen_final_combinada = cv2.vconcat(imagenes_para_stitch)
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento con prorrateo completado! Revise las planillas resumen y gráficos.")
+                st.success("🎉 ¡Procesamiento completado! Revise las planillas resumen, el perfil de RMP y los gráficos.")
             else:
                 st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
@@ -263,11 +275,38 @@ with tab_registro:
 
 
 # ==========================================
-# 4. PESTAÑA: GRÁFICO COMPARATIVO
+# 4. PESTAÑA: PERFIL DE RMP
+# ==========================================
+with tab_perfil:
+    st.header("📉 Perfil de Resistencia Mecánica a la Penetración (RMP)")
+    st.markdown("Evolución continua de la resistencia mecánica (MPa) en función de la profundidad (cm), punto a punto por cada golpe registrado.")
+    
+    if st.session_state['df_golpes_todos'] is not None:
+        fig_perfil, ax_perfil = plt.subplots(figsize=(10, 7))
+        df_golpes = st.session_state['df_golpes_todos']
+        
+        for muestra in df_golpes['Muestra'].unique():
+            df_m = df_golpes[df_golpes['Muestra'] == muestra].sort_values('Profundidad_Final_cm')
+            ax_perfil.plot(df_m['Resistencia_MPa'], df_m['Profundidad_Final_cm'], marker='o', linestyle='-', label=muestra, linewidth=2)
+            
+        ax_perfil.set_xlabel('Resistencia Mecánica a la Penetración (MPa)', fontsize=12)
+        ax_perfil.set_ylabel('Profundidades (cm)', fontsize=12)
+        ax_perfil.set_title('Perfil Continuo de RMP por Muestra', fontsize=14, fontweight='bold')
+        ax_perfil.invert_yaxis()  # El 0 queda arriba y la profundidad aumenta hacia abajo
+        ax_perfil.legend(title="Muestras")
+        ax_perfil.grid(True, linestyle='--', alpha=0.6)
+        
+        st.pyplot(fig_perfil)
+    else:
+        st.info("ℹ️ Procese las fotografías en la pestaña **Carga de imágenes** para generar el perfil de RMP.")
+
+
+# ==========================================
+# 5. PESTAÑA: GRÁFICO COMPARATIVO
 # ==========================================
 with tab_graficos:
     st.header("📈 Gráfico Comparativo de Resistencia")
-    st.markdown("Perfil horizontal de resistencia media a la penetración (de superficie a profundidad).")
+    st.markdown("Perfil horizontal de resistencia media a la penetración agrupada por intervalos.")
     
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
@@ -287,7 +326,7 @@ with tab_graficos:
             
         ax.set_ylabel('Intervalo de Profundidad')
         ax.set_xlabel('Resistencia Media a la Penetración (MPa)')
-        ax.set_title('Perfil de Resistencia Mecánica por Intervalos y Muestras')
+        ax.set_title('Resistencia Media por Intervalos y Muestras')
         ax.set_yticks(y + height * (len(muestras) - 1) / 2)
         ax.set_yticklabels(intervalos)
         ax.invert_yaxis()
@@ -300,17 +339,17 @@ with tab_graficos:
 
 
 # ==========================================
-# 5. PESTAÑA: MANUAL OPERATIVO
+# 6. PESTAÑA: MANUAL OPERATIVO
 # ==========================================
 with tab_manual:
     st.header("📚 Manual Operativo Simplificado")
     
-    with st.expander("📖 Guía de uso y prorrateo por intervalos", expanded=True):
+    with st.expander("📖 Guía de uso y visualización del Perfil de RMP", expanded=True):
         st.markdown("""
         1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
-        2. **Procesamiento con Prorrateo:** Al subir las fotos, el sistema calcula de manera exacta la fracción de penetración de cada golpe que cruza los límites de profundidad (0-10, 10-20 y 20-30 cm), asignando los valores proporcionales tal como se realiza en la planilla Excel institucional.
-        3. **Auditoría:** En **🖼️ Registro visual**, compruebe que las líneas rojas coincidan exactamente con cada marca de la faja.
-        4. **Exportación:** Descargue la planilla en Excel (`.xlsx`) desde **📊 Planillas resumen** lista para InfoStat.
+        2. **Procesamiento:** Suba las fotos de las fajas y presione procesar.
+        3. **Perfil de RMP:** Diríjase a la pestaña **📉 Perfil de RMP** para visualizar la línea continua punto a punto con la evolución de la resistencia mecánica en función de la profundidad.
+        4. **Exportación:** Descargue su planilla en formato Excel (`.xlsx`) desde **📊 Planillas resumen**.
         """)
         
     st.markdown("---")
