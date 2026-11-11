@@ -81,7 +81,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo por intervalos y almacena el detalle golpe a golpe para los perfiles continuos.")
+    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo por intervalos y almacena el detalle golpe a golpe para los perfiles continuos proyectados desde la superficie.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -170,11 +170,12 @@ with tab_carga:
                         delta_e_detalles = np.where(delta_e_detalles <= 0, 0.001, delta_e_detalles)
                         res_detalles = (energia_golpe / (area_cono_m2 * delta_e_detalles)) / 1e6
                         
-                        # Agregar el punto inicial (0 cm, 0 MPa) para que la línea comience siempre en la superficie
+                        # Proyección suave desde la superficie (0 cm) con el valor del primer golpe
+                        res_primer_golpe = res_detalles[0] if len(res_detalles) > 0 else 0.0
                         df_golpes_indiv = pd.DataFrame({
                             'Muestra': [nombre_muestra],
                             'Profundidad_Final_cm': [0.0],
-                            'Resistencia_MPa': [0.0]
+                            'Resistencia_MPa': [res_primer_golpe]
                         })
                         
                         df_golpes_resto = pd.DataFrame({
@@ -287,7 +288,7 @@ with tab_registro:
 # ==========================================
 with tab_perfil:
     st.header("📉 Perfil de Resistencia Mecánica a la Penetración (RMP)")
-    st.markdown("Evolución continua de la resistencia mecánica (MPa) en función de la profundidad (cm), iniciando desde la superficie (0 cm).")
+    st.markdown("Evolución continua de la resistencia mecánica (MPa) en función de la profundidad (cm), proyectada suavemente desde la superficie con el valor del primer golpe.")
     
     if st.session_state['df_golpes_todos'] is not None:
         fig_perfil, ax_perfil = plt.subplots(figsize=(10, 7))
@@ -299,8 +300,7 @@ with tab_perfil:
             
         ax_perfil.set_xlabel('Resistencia Mecánica a la Penetración (MPa)', fontsize=12)
         ax_perfil.set_ylabel('Profundidades (cm)', fontsize=12)
-        ax_perfil.set_title('Perfil Continuo de RMP por Muestra (Iniciado en Superficie)', fontsize=14, fontweight='bold')
-        ax_perfil.set_xlim(left=0)  # Forzar que el eje horizontal comience siempre en 0
+        ax_perfil.set_title('Perfil Continuo de RMP (Proyectado desde la Superficie)', fontsize=14, fontweight='bold')
         ax_perfil.set_ylim(bottom=32, top=0)  # El 0 queda arriba y la profundidad aumenta hacia abajo
         ax_perfil.legend(title="Muestras")
         ax_perfil.grid(True, linestyle='--', alpha=0.6)
@@ -357,7 +357,7 @@ with tab_manual:
         st.markdown("""
         1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
         2. **Procesamiento:** Suba las fotos de las fajas y presione procesar.
-        3. **Perfil de RMP:** Diríjase a la pestaña **📉 Perfil de RMP** para visualizar la línea continua que parte desde el origen horizontal en la superficie (0 cm, 0 MPa) tal como los perfiles agronómicos clásicos.
+        3. **Perfil de RMP:** En la pestaña **📉 Perfil de RMP**, la curva se proyecta suavemente desde la superficie (0 cm) utilizando el valor de resistencia del primer golpe detectado, evitando caer erróneamente a cero en la superficie.
         4. **Exportación:** Descargue su planilla en formato Excel (`.xlsx`) desde **📊 Planillas resumen**.
         """)
         
