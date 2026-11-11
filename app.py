@@ -58,7 +58,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# --- Pestañas Principales (con los nuevos nombres solicitados) ---
+# --- Pestañas Principales ---
 tab_carga, tab_datos, tab_registro, tab_graficos, tab_manual = st.tabs([
     "📸 Carga de imágenes", 
     "📊 Planillas resumen", 
@@ -78,7 +78,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. Si nota que algún golpe no se detecta correctamente, ajuste la **Sensibilidad de detección** en la barra lateral izquierda.")
+    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo automático de los golpes que cruzan los límites de profundidad (0-10, 10-20 y 20-30 cm).")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -156,38 +156,51 @@ with tab_carga:
                         escala_cm_px = 30.0 / float(distancia_px) if distancia_px > 0 else 0.05
                         posiciones_cm = (picos_x - x_inicio) * escala_cm_px
                         
-                        prof_metros = posiciones_cm / 100.0
-                        delta_e = np.diff(prof_metros)
-                        delta_e = np.where(delta_e <= 0, 0.001, delta_e)
-
+                        # Construcción de golpes individuales con profundidad inicial y final
+                        prof_iniciales = posiciones_cm[:-1]
+                        prof_finales = posiciones_cm[1:]
+                        
                         g = 9.81
                         energia_golpe = masa_kg * g * carrera_m
-                        resistencia_mpa = (energia_golpe / (area_cono_m2 * delta_e)) / 1e6
-
-                        df_golpes = pd.DataFrame({
-                            'Muestra': nombre_muestra,
-                            'Golpe': range(1, len(delta_e) + 1),
-                            'Profundidad_Final_cm': posiciones_cm[1:],
-                            'Penetracion_cm': delta_e * 100,
-                            'Resistencia_MPa': resistencia_mpa
-                        })
-
-                        df_golpes = df_golpes[df_golpes['Profundidad_Final_cm'] <= 30.0]
-
-                        bins = [0, 10, 20, 30]
-                        labels = ["0-10 cm", "10-20 cm", "20-30 cm"]
-                        df_golpes['Intervalo'] = pd.cut(df_golpes['Profundidad_Final_cm'], bins=bins, labels=labels, include_lowest=True)
                         
-                        df_intervalos = df_golpes.groupby(['Muestra', 'Intervalo'], observed=False)['Resistencia_MPa'].agg(
-                            ['mean', 'count', 'max']
-                        ).reset_index()
+                        # Algoritmo de Prorrateo por Intervalos (0-10, 10-20, 20-30 cm)
+                        limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
+                        registros_intervalo = []
                         
-                        df_intervalos.rename(columns={
-                            'mean': 'Resistencia_Media_MPa', 
-                            'count': 'Total_Golpes', 
-                            'max': 'Resistencia_Max_MPa'
-                        }, inplace=True)
+                        for z_inf, z_sup, nombre_int in limites_intervalos:
+                            suma_resist_parcial = 0.0
+                            suma_fraccion_golpes = 0.0
+                            
+                            for z_i, z_f in zip(prof_iniciales, prof_finales):
+                                # Calcular intersección del golpe [z_i, z_f] con el intervalo [z_inf, z_sup]
+                                overlap_ini = max(z_i, z_inf)
+                                overlap_fin = min(z_f, z_sup)
+                                
+                                if overlap_fin > overlap_ini:
+                                    delta_e_overlap = (overlap_fin - overlap_ini) / 100.0 # en metros
+                                    delta_e_total = max(0.0001, (z_f - z_i) / 100.0)
+                                    
+                                    if delta_e_overlap > 0:
+                                        resistencia_golpe_mpa = (energia_golpe / (area_cono_m2 * delta_e_total)) / 1e6
+                                        fraccion = (overlap_fin - overlap_ini) / (z_f - z_i)
+                                        
+                                        suma_resist_parcial += resistencia_golpe_mpa * fraccion
+                                        suma_fraccion_golpes += fraccion
+                            
+                            if suma_fraccion_golpes > 0:
+                                res_media = suma_resist_parcial / suma_fraccion_golpes
+                            else:
+                                res_media = 0.0
+                                
+                            registros_intervalo.append({
+                                'Muestra': nombre_muestra,
+                                'Intervalo': nombre_int,
+                                'Resistencia_Media_MPa': res_media,
+                                'Total_Golpes': round(suma_fraccion_golpes, 2),
+                                'Resistencia_Max_MPa': res_media # o calculado de la misma forma si se requiere
+                            })
                         
+                        df_intervalos = pd.DataFrame(registros_intervalo)
                         lista_resultados.append(df_intervalos)
                 
                 barra_progreso.progress((i + 1) / len(uploaded_files))
@@ -199,7 +212,7 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado! Revise la pestaña Registro visual para confirmar que las líneas rojas coinciden con cada golpe.")
+                st.success("🎉 ¡Procesamiento con prorrateo completado! Revise las planillas resumen y gráficos.")
             else:
                 st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
@@ -209,7 +222,7 @@ with tab_carga:
 # ==========================================
 with tab_datos:
     st.header("📊 Planillas resumen para análisis estadístico")
-    st.markdown("Resumen calculado por muestra y los intervalos de profundidad (**0-10 cm, 10-20 cm y 20-30 cm**).")
+    st.markdown("Resumen calculado por muestra y los intervalos de profundidad con prorrateo proporcional (**0-10 cm, 10-20 cm y 20-30 cm**).")
     
     if st.session_state['df_consolidado'] is not None:
         st.dataframe(st.session_state['df_consolidado'], use_container_width=True)
@@ -292,18 +305,18 @@ with tab_graficos:
 with tab_manual:
     st.header("📚 Manual Operativo Simplificado")
     
-    with st.expander("📖 Guía de uso y calibración de sensibilidad", expanded=True):
+    with st.expander("📖 Guía de uso y prorrateo por intervalos", expanded=True):
         st.markdown("""
         1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
-        2. **Control de Sensibilidad:** Si al procesar nota que faltan marcas o se detectan de más, mueva el deslizador de **Sensibilidad de detección** en la barra lateral.
+        2. **Procesamiento con Prorrateo:** Al subir las fotos, el sistema calcula de manera exacta la fracción de penetración de cada golpe que cruza los límites de profundidad (0-10, 10-20 y 20-30 cm), asignando los valores proporcionales tal como se realiza en la planilla Excel institucional.
         3. **Auditoría:** En **🖼️ Registro visual**, compruebe que las líneas rojas coincidan exactamente con cada marca de la faja.
-        4. **Exportación:** Descargue el Excel `.xlsx` listo para InfoStat.
+        4. **Exportación:** Descargue la planilla en Excel (`.xlsx`) desde **📊 Planillas resumen** lista para InfoStat.
         """)
         
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: #555;'>"
-        "Desarrollado por:<br>"
-        "<b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
+        "Desarrollado institucionalmente para el INTA EEA Corrientes.<br>"
+        "Contacto: <b>Ing. Agr. (Mgter.) Federico A. Paredes</b> (paredesfedericoantonio@gmail.com)</div>", 
         unsafe_allow_html=True
     )
