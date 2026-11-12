@@ -24,7 +24,7 @@ st.markdown("""
 st.title("🌾 Resistencia mecánica a la penetración de raíces")
 st.markdown("Procesamiento de mediciones a campo con penetrómetro de golpes.")
 
-# --- Panel Lateral de Parámetros del Instrumento y Sensibilidad ---
+# --- Panel Lateral de Parámetros del Instrumento y Configuración ---
 st.sidebar.header("⚙️ Parámetros del Instrumento")
 masa_kg = st.sidebar.number_input("Peso / Masa (F en kg)", value=2.088, min_value=0.1, step=0.001, format="%.3f")
 carrera_m = st.sidebar.number_input("Carrera / Recorrido (E en m)", value=0.565, min_value=0.01, step=0.001, format="%.3f")
@@ -33,6 +33,14 @@ altura_cono_cm = st.sidebar.number_input("Altura del cono (cm)", value=3.0, min_
 
 constante_aparato = masa_kg * carrera_m
 st.sidebar.info(f"📌 Constante del aparato (F × E): **{constante_aparato:.4f} kg·m**")
+
+st.sidebar.markdown("---")
+st.sidebar.header("📏 Intervalos de Profundidad")
+intervalos_input = st.sidebar.text_input(
+    "Definir intervalos (cm)", 
+    value="0-10, 10-20, 20-30, 30-40, 40-50",
+    help="Ingrese los intervalos separados por comas. El sistema se adapta hasta 50 cm."
+)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎛️ Calibración de Detección")
@@ -81,7 +89,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas. El sistema realiza el prorrateo por intervalos y almacena el detalle golpe a golpe para los perfiles continuos proyectados desde la superficie.")
+    st.markdown("Cargue las fotografías de las fajas de campo. El sistema procesa registros hasta **50 cm** y aplica el prorrateo dinámico según los intervalos definidos en la barra lateral.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -93,6 +101,22 @@ with tab_carga:
         st.info(f"Se cargaron {len(uploaded_files)} imagen(es) para procesar.")
         
         if st.button("🚀 Procesar Imágenes", type="primary"):
+            # Parsear los intervalos ingresados por el usuario
+            limites_intervalos = []
+            try:
+                for parte in intervalos_input.split(','):
+                    partes_nums = parte.strip().split('-')
+                    if len(partes_nums) == 2:
+                        z_inf = float(partes_nums[0].strip())
+                        z_sup = float(partes_nums[1].strip())
+                        nombre_int = f"{int(z_inf)}-{int(z_sup)} cm" if z_inf.is_integer() and z_sup.is_integer() else f"{z_inf}-{z_sup} cm"
+                        limites_intervalos.append((z_inf, z_sup, nombre_int))
+            except Exception:
+                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm"), (30.0, 40.0, "30-40 cm"), (40.0, 50.0, "40-50 cm")]
+            
+            if not limites_intervalos:
+                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm"), (30.0, 40.0, "30-40 cm"), (40.0, 50.0, "40-50 cm")]
+
             lista_resultados = []
             lista_golpes_detallados = []
             imagenes_para_stitch = []
@@ -157,7 +181,8 @@ with tab_carga:
                         x_fin = picos_x[-1]
                         distancia_px = x_fin - x_inicio
                         
-                        escala_cm_px = 30.0 / float(distancia_px) if distancia_px > 0 else 0.05
+                        # Se asume que la longitud total de la faja representa hasta 50 cm (o se escala según los golpes registrados)
+                        escala_cm_px = 50.0 / float(distancia_px) if distancia_px > 0 else 0.05
                         posiciones_cm = (picos_x - x_inicio) * escala_cm_px
                         
                         prof_iniciales = posiciones_cm[:-1]
@@ -186,9 +211,7 @@ with tab_carga:
                         df_golpes_indiv = pd.concat([df_golpes_indiv, df_golpes_resto], ignore_index=True)
                         lista_golpes_detallados.append(df_golpes_indiv)
                         
-                        limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
                         registros_intervalo = []
-                        
                         for z_inf, z_sup, nombre_int in limites_intervalos:
                             suma_resist_parcial = 0.0
                             suma_fraccion_golpes = 0.0
@@ -231,7 +254,7 @@ with tab_carga:
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado! Revise las planillas resumen, el perfil de RMP y los gráficos.")
+                st.success("🎉 ¡Procesamiento completado hasta 50 cm! Revise las planillas resumen, el perfil de RMP y los gráficos.")
             else:
                 st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
@@ -241,7 +264,7 @@ with tab_carga:
 # ==========================================
 with tab_datos:
     st.header("📊 Planillas resumen")
-    st.markdown("Resumen calculado por muestra y los intervalos de profundidad con prorrateo proporcional (**0-10 cm, 10-20 cm y 20-30 cm**).")
+    st.markdown("Resumen calculado por muestra y los intervalos de profundidad configurados con prorrateo proporcional.")
     
     if st.session_state['df_consolidado'] is not None:
         st.dataframe(st.session_state['df_consolidado'], use_container_width=True)
@@ -289,7 +312,7 @@ with tab_perfil:
     st.markdown("Gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad.")
     
     if st.session_state['df_golpes_todos'] is not None:
-        fig_perfil, ax_perfil = plt.subplots(figsize=(10, 7))
+        fig_perfil, ax_perfil = plt.subplots(figsize=(10, 8))
         df_golpes = st.session_state['df_golpes_todos']
         
         for muestra in df_golpes['Muestra'].unique():
@@ -298,9 +321,9 @@ with tab_perfil:
             
         ax_perfil.set_xlabel('Resistencia Mecánica (MPa)', fontsize=12)
         ax_perfil.set_ylabel('Profundidades (cm)', fontsize=12)
-        ax_perfil.set_title('Perfil Continuo de RMP por Muestra', fontsize=14, fontweight='bold')
+        ax_perfil.set_title('Perfil Continuo de RMP por Muestra (hasta 50 cm)', fontsize=14, fontweight='bold')
         ax_perfil.set_xlim(left=0)
-        ax_perfil.set_ylim(bottom=32, top=0)
+        ax_perfil.set_ylim(bottom=52, top=0)  # Extendido hasta 50-52 cm con el 0 arriba
         ax_perfil.legend(title="Muestras")
         ax_perfil.grid(True, linestyle='--', alpha=0.6)
         
@@ -319,9 +342,9 @@ with tab_graficos:
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
         
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(10, 7))
         muestras = df_c['Muestra'].unique()
-        intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"]
+        intervalos = df_c['Intervalo'].unique()
         
         y = np.arange(len(intervalos))
         height = 0.8 / max(len(muestras), 1)
@@ -355,9 +378,9 @@ with tab_manual:
     with st.expander("📖 Guía de uso de la aplicación", expanded=True):
         st.markdown("""
         * **Carga de imágenes:** Permite seleccionar y cargar múltiples fotografías de fajas de papel en formatos JPG o PNG.
-        * **Planillas resumen:** Muestra el cálculo consolidado por intervalos (0-10, 10-20 y 20-30 cm) con prorrateo proporcional, y habilita la descarga de la planilla en formato Excel (`.xlsx`).
+        * **Planillas resumen:** Muestra el cálculo consolidado por intervalos personalizados (con soporte hasta los 50 cm de profundidad) aplicando prorrateo proporcional, y habilita la descarga directa en Excel (`.xlsx`).
         * **Registro visual:** Presenta una imagen unificada con líneas rojas verticales superpuestas sobre cada golpe detectado, permitiendo auditar visualmente el conteo.
-        * **Perfil de RMP:** Muestra el gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad, proyectado suavemente desde la superficie.
+        * **Perfil de RMP:** Muestra el gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad (hasta 50 cm), proyectado suavemente desde la superficie.
         * **Gráfico Comparativo:** Visualiza la RMP por intervalo de profundidad en un gráfico de barras horizontales ordenado de superficie a profundidad.
         """)
         
