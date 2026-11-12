@@ -65,7 +65,7 @@ tab_carga, tab_datos, tab_registro, tab_perfil, tab_graficos, tab_manual = st.ta
     "🖼️ Registro visual", 
     "📉 Perfil de RMP",
     "📈 Gráfico Comparativo", 
-    "📚 Manual Operativo"
+    "📚 Instructivo de uso"
 ])
 
 if 'df_consolidado' not in st.session_state:
@@ -92,7 +92,7 @@ with tab_carga:
     if uploaded_files:
         st.info(f"Se cargaron {len(uploaded_files)} imagen(es) para procesar.")
         
-        if st.button("🚀 Procesar Fajas Automáticamente", type="primary"):
+        if st.button("🚀 Procesar Imágenes", type="primary"):
             lista_resultados = []
             lista_golpes_detallados = []
             imagenes_para_stitch = []
@@ -170,7 +170,6 @@ with tab_carga:
                         delta_e_detalles = np.where(delta_e_detalles <= 0, 0.001, delta_e_detalles)
                         res_detalles = (energia_golpe / (area_cono_m2 * delta_e_detalles)) / 1e6
                         
-                        # Proyección suave desde la superficie (0 cm) con el valor del primer golpe
                         res_primer_golpe = res_detalles[0] if len(res_detalles) > 0 else 0.0
                         df_golpes_indiv = pd.DataFrame({
                             'Muestra': [nombre_muestra],
@@ -187,7 +186,6 @@ with tab_carga:
                         df_golpes_indiv = pd.concat([df_golpes_indiv, df_golpes_resto], ignore_index=True)
                         lista_golpes_detallados.append(df_golpes_indiv)
                         
-                        # Prorrateo por intervalos (0-10, 10-20, 20-30 cm)
                         limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
                         registros_intervalo = []
                         
@@ -242,7 +240,7 @@ with tab_carga:
 # 2. PESTAÑA: PLANILLAS RESUMEN
 # ==========================================
 with tab_datos:
-    st.header("📊 Planillas resumen para análisis estadístico")
+    st.header("📊 Planillas resumen")
     st.markdown("Resumen calculado por muestra y los intervalos de profundidad con prorrateo proporcional (**0-10 cm, 10-20 cm y 20-30 cm**).")
     
     if st.session_state['df_consolidado'] is not None:
@@ -254,7 +252,7 @@ with tab_datos:
         excel_data = output.getvalue()
         
         st.download_button(
-            label="📥 Descargar planilla en formato Excel (.xlsx) para InfoStat",
+            label="📥 Descargar planilla en formato Excel (.xlsx)",
             data=excel_data,
             file_name="resistencia_suelos_intervalos.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -288,7 +286,7 @@ with tab_registro:
 # ==========================================
 with tab_perfil:
     st.header("📉 Perfil de Resistencia Mecánica a la Penetración (RMP)")
-    st.markdown("Evolución continua de la resistencia mecánica (MPa) en función de la profundidad (cm), proyectada suavemente desde la superficie con el valor del primer golpe.")
+    st.markdown("Gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad.")
     
     if st.session_state['df_golpes_todos'] is not None:
         fig_perfil, ax_perfil = plt.subplots(figsize=(10, 7))
@@ -298,10 +296,11 @@ with tab_perfil:
             df_m = df_golpes[df_golpes['Muestra'] == muestra].sort_values('Profundidad_Final_cm')
             ax_perfil.plot(df_m['Resistencia_MPa'], df_m['Profundidad_Final_cm'], marker='o', linestyle='-', label=muestra, linewidth=2)
             
-        ax_perfil.set_xlabel('Resistencia Mecánica a la Penetración (MPa)', fontsize=12)
+        ax_perfil.set_xlabel('Resistencia Mecánica (MPa)', fontsize=12)
         ax_perfil.set_ylabel('Profundidades (cm)', fontsize=12)
-        ax_perfil.set_title('Perfil Continuo de RMP (Proyectado desde la Superficie)', fontsize=14, fontweight='bold')
-        ax_perfil.set_ylim(bottom=32, top=0)  # El 0 queda arriba y la profundidad aumenta hacia abajo
+        ax_perfil.set_title('Perfil Continuo de RMP por Muestra', fontsize=14, fontweight='bold')
+        ax_perfil.set_xlim(left=0)
+        ax_perfil.set_ylim(bottom=32, top=0)
         ax_perfil.legend(title="Muestras")
         ax_perfil.grid(True, linestyle='--', alpha=0.6)
         
@@ -315,7 +314,7 @@ with tab_perfil:
 # ==========================================
 with tab_graficos:
     st.header("📈 Gráfico Comparativo de Resistencia")
-    st.markdown("Perfil horizontal de resistencia media a la penetración agrupada por intervalos.")
+    st.markdown("RMP por intervalo de profundidad.")
     
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
@@ -334,8 +333,8 @@ with tab_graficos:
             ax.barh(y + i * height, x_vals, height, label=muestra, alpha=0.85)
             
         ax.set_ylabel('Intervalo de Profundidad')
-        ax.set_xlabel('Resistencia Media a la Penetración (MPa)')
-        ax.set_title('Resistencia Media por Intervalos y Muestras')
+        ax.set_xlabel('Resistencia Mecánica (MPa)')
+        ax.set_title('Resistencia Mecánica por Intervalo de profundidad')
         ax.set_yticks(y + height * (len(muestras) - 1) / 2)
         ax.set_yticklabels(intervalos)
         ax.invert_yaxis()
@@ -348,17 +347,18 @@ with tab_graficos:
 
 
 # ==========================================
-# 6. PESTAÑA: MANUAL OPERATIVO
+# 6. PESTAÑA: INSTRUCTIVO DE USO
 # ==========================================
 with tab_manual:
-    st.header("📚 Manual Operativo Simplificado")
+    st.header("📚 Instructivo de uso")
     
-    with st.expander("📖 Guía de uso y visualización del Perfil de RMP", expanded=True):
+    with st.expander("📖 Guía de uso de la aplicación", expanded=True):
         st.markdown("""
-        1. **Configuración:** Ajuste los parámetros físicos del instrumento en la barra lateral.
-        2. **Procesamiento:** Suba las fotos de las fajas y presione procesar.
-        3. **Perfil de RMP:** En la pestaña **📉 Perfil de RMP**, la curva se proyecta suavemente desde la superficie (0 cm) utilizando el valor de resistencia del primer golpe detectado, evitando caer erróneamente a cero en la superficie.
-        4. **Exportación:** Descargue su planilla en formato Excel (`.xlsx`) desde **📊 Planillas resumen**.
+        * **Carga de imágenes:** Permite seleccionar y cargar múltiples fotografías de fajas de papel en formatos JPG o PNG.
+        * **Planillas resumen:** Muestra el cálculo consolidado por intervalos (0-10, 10-20 y 20-30 cm) con prorrateo proporcional, y habilita la descarga de la planilla en formato Excel (`.xlsx`).
+        * **Registro visual:** Presenta una imagen unificada con líneas rojas verticales superpuestas sobre cada golpe detectado, permitiendo auditar visualmente el conteo.
+        * **Perfil de RMP:** Muestra el gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad, proyectado suavemente desde la superficie.
+        * **Gráfico Comparativo:** Visualiza la RMP por intervalo de profundidad en un gráfico de barras horizontales ordenado de superficie a profundidad.
         """)
         
     st.markdown("---")
