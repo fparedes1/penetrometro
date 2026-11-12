@@ -38,8 +38,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("📏 Intervalos de Profundidad")
 intervalos_input = st.sidebar.text_input(
     "Definir intervalos (cm)", 
-    value="0-10, 10-20, 20-30, 30-40, 40-50",
-    help="Ingrese los intervalos separados por comas. El sistema se adapta hasta 50 cm."
+    value="0-10, 10-20, 20-30",
+    help="Ingrese los intervalos separados por comas. Define automáticamente si el ensayo es a 30 cm, 50 cm u otra profundidad."
 )
 
 st.sidebar.markdown("---")
@@ -89,7 +89,7 @@ if 'imagen_registro_bytes' not in st.session_state:
 # ==========================================
 with tab_carga:
     st.header("📸 Captura y Procesamiento Fotográfico")
-    st.markdown("Cargue las fotografías de las fajas de campo. El sistema procesa registros hasta **50 cm** y aplica el prorrateo dinámico según los intervalos definidos en la barra lateral.")
+    st.markdown("Cargue las fotografías de las fajas de campo. El sistema detecta automáticamente la profundidad máxima según los intervalos configurados.")
     
     uploaded_files = st.file_uploader(
         "Seleccionar imágenes de fajas (JPG, PNG)", 
@@ -101,21 +101,31 @@ with tab_carga:
         st.info(f"Se cargaron {len(uploaded_files)} imagen(es) para procesar.")
         
         if st.button("🚀 Procesar Imágenes", type="primary"):
-            # Parsear los intervalos ingresados por el usuario
+            # Parsear los intervalos y determinar dinámicamente la profundidad máxima
             limites_intervalos = []
+            labels_intervalos = []
+            max_profundidad_ensayo = 30.0
+            
             try:
                 for parte in intervalos_input.split(','):
                     partes_nums = parte.strip().split('-')
                     if len(partes_nums) == 2:
                         z_inf = float(partes_nums[0].strip())
                         z_sup = float(partes_nums[1].strip())
-                        nombre_int = f"{int(z_inf)}-{int(z_sup)} cm" if z_inf.is_integer() and z_sup.is_integer() else f"{z_inf}-{z_sup} cm"
+                        nombre_int = f"{int(z_inf)}-{int(z_sup) if not z_sup.is_integer() else int(z_sup)} cm" if z_inf.is_integer() else f"{z_inf}-{z_sup} cm"
                         limites_intervalos.append((z_inf, z_sup, nombre_int))
+                        labels_intervalos.append(nombre_int)
+                if limites_intervalos:
+                    max_profundidad_ensayo = max(sup for inf, sup, name in limites_intervalos)
             except Exception:
-                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm"), (30.0, 40.0, "30-40 cm"), (40.0, 50.0, "40-50 cm")]
+                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
+                labels_intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"]
+                max_profundidad_ensayo = 30.0
             
             if not limites_intervalos:
-                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm"), (30.0, 40.0, "30-40 cm"), (40.0, 50.0, "40-50 cm")]
+                limites_intervalos = [(0.0, 10.0, "0-10 cm"), (10.0, 20.0, "10-20 cm"), (20.0, 30.0, "20-30 cm")]
+                labels_intervalos = ["0-10 cm", "10-20 cm", "20-30 cm"]
+                max_profundidad_ensayo = 30.0
 
             lista_resultados = []
             lista_golpes_detallados = []
@@ -181,8 +191,8 @@ with tab_carga:
                         x_fin = picos_x[-1]
                         distancia_px = x_fin - x_inicio
                         
-                        # Se asume que la longitud total de la faja representa hasta 50 cm (o se escala según los golpes registrados)
-                        escala_cm_px = 50.0 / float(distancia_px) if distancia_px > 0 else 0.05
+                        # Escala adaptada exactamente a la profundidad máxima configurada
+                        escala_cm_px = max_profundidad_ensayo / float(distancia_px) if distancia_px > 0 else (max_profundidad_ensayo / 1000.0)
                         posiciones_cm = (picos_x - x_inicio) * escala_cm_px
                         
                         prof_iniciales = posiciones_cm[:-1]
@@ -249,12 +259,14 @@ with tab_carga:
             if lista_resultados and imagenes_para_stitch:
                 st.session_state['df_consolidado'] = pd.concat(lista_resultados, ignore_index=True)
                 st.session_state['df_golpes_todos'] = pd.concat(lista_golpes_detallados, ignore_index=True)
+                st.session_state['max_prof_actual'] = max_profundidad_ensayo
+                st.session_state['labels_actuales'] = labels_intervalos
                 
                 imagen_final_combinada = cv2.vconcat(imagenes_para_stitch)
                 _, buffer = cv2.imencode('.jpg', imagen_final_combinada)
                 st.session_state['imagen_registro_bytes'] = buffer.tobytes()
                 
-                st.success("🎉 ¡Procesamiento completado hasta 50 cm! Revise las planillas resumen, el perfil de RMP y los gráficos.")
+                st.success(f"🎉 ¡Procesamiento completado hasta {int(max_profundidad_ensayo)} cm! Revise las planillas y gráficos.")
             else:
                 st.error("No se pudieron detectar marcas. Ajuste la sensibilidad en el panel lateral.")
 
@@ -314,6 +326,7 @@ with tab_perfil:
     if st.session_state['df_golpes_todos'] is not None:
         fig_perfil, ax_perfil = plt.subplots(figsize=(10, 8))
         df_golpes = st.session_state['df_golpes_todos']
+        max_p = st.session_state.get('max_prof_actual', 30.0)
         
         for muestra in df_golpes['Muestra'].unique():
             df_m = df_golpes[df_golpes['Muestra'] == muestra].sort_values('Profundidad_Final_cm')
@@ -321,9 +334,9 @@ with tab_perfil:
             
         ax_perfil.set_xlabel('Resistencia Mecánica (MPa)', fontsize=12)
         ax_perfil.set_ylabel('Profundidades (cm)', fontsize=12)
-        ax_perfil.set_title('Perfil Continuo de RMP por Muestra (hasta 50 cm)', fontsize=14, fontweight='bold')
+        ax_perfil.set_title(f'Perfil Continuo de RMP por Muestra (hasta {int(max_p)} cm)', fontsize=14, fontweight='bold')
         ax_perfil.set_xlim(left=0)
-        ax_perfil.set_ylim(bottom=52, top=0)  # Extendido hasta 50-52 cm con el 0 arriba
+        ax_perfil.set_ylim(bottom=max_p + 2, top=0)  # Límite dinámico ajustado a la profundidad máxima configurada
         ax_perfil.legend(title="Muestras")
         ax_perfil.grid(True, linestyle='--', alpha=0.6)
         
@@ -341,18 +354,23 @@ with tab_graficos:
     
     if st.session_state['df_consolidado'] is not None:
         df_c = st.session_state['df_consolidado']
+        intervalos = st.session_state.get('labels_actuales', ["0-10 cm", "10-20 cm", "20-30 cm"])
         
         fig, ax = plt.subplots(figsize=(10, 7))
         muestras = df_c['Muestra'].unique()
-        intervalos = df_c['Intervalo'].unique()
         
         y = np.arange(len(intervalos))
         height = 0.8 / max(len(muestras), 1)
         
         for i, muestra in enumerate(muestras):
             df_m = df_c[df_c['Muestra'] == muestra]
-            x_vals = [df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0] 
-                      if not df_m[df_m['Intervalo'] == interv].empty and not pd.isna(df_m[df_m['Intervalo'] == interv]['Resistencia_Media_MPa'].values[0]) else 0 for interv in intervalos]
+            x_vals = []
+            for interv in intervalos:
+                val_row = df_m[df_m['Intervalo'] == interv]
+                if not val_row.empty and not pd.isna(val_row['Resistencia_Media_MPa'].values[0]):
+                    x_vals.append(val_row['Resistencia_Media_MPa'].values[0])
+                else:
+                    x_vals.append(0)
             ax.barh(y + i * height, x_vals, height, label=muestra, alpha=0.85)
             
         ax.set_ylabel('Intervalo de Profundidad')
@@ -378,10 +396,10 @@ with tab_manual:
     with st.expander("📖 Guía de uso de la aplicación", expanded=True):
         st.markdown("""
         * **Carga de imágenes:** Permite seleccionar y cargar múltiples fotografías de fajas de papel en formatos JPG o PNG.
-        * **Planillas resumen:** Muestra el cálculo consolidado por intervalos personalizados (con soporte hasta los 50 cm de profundidad) aplicando prorrateo proporcional, y habilita la descarga directa en Excel (`.xlsx`).
+        * **Planillas resumen:** Muestra el cálculo consolidado por intervalos personalizados (configurables en la barra lateral para 30 cm, 50 cm u otros) aplicando prorrateo proporcional, y habilita la descarga directa en Excel (`.xlsx`).
         * **Registro visual:** Presenta una imagen unificada con líneas rojas verticales superpuestas sobre cada golpe detectado, permitiendo auditar visualmente el conteo.
-        * **Perfil de RMP:** Muestra el gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad (hasta 50 cm), proyectado suavemente desde la superficie.
-        * **Gráfico Comparativo:** Visualiza la RMP por intervalo de profundidad en un gráfico de barras horizontales ordenado de superficie a profundidad.
+        * **Perfil de RMP:** Muestra el gráfico de la resistencia mecánica a la penetración de las raíces en función de la profundidad según el rango configurado, proyectado suavemente desde la superficie.
+        * **Gráfico Comparativo:** Visualiza la RMP por intervalo de profundidad en un gráfico de barras horizontales ordenado de superficie a profundidad respetando exactamente los intervalos definidos.
         """)
         
     st.markdown("---")
